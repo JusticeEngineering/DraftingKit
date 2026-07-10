@@ -28,7 +28,8 @@ let package = Package(
             name: "WireframeCoreTests",
             dependencies: ["WireframeCore"],
             resources: [
-                .copy("Resources")
+                .copy("Resources"),
+                .copy("Goldens"),
             ]
         ),
     ]
