@@ -1,23 +1,24 @@
 // The makeLineDrawing pipeline (SPEC.md §4). Each stage is a separate
 // internal function with its own unit tests — stages are module boundaries.
 //
-// M2 status: stages 4.2 (classify), 4.3 (project) and 4.7 (canonicalize) are
-// live; 4.4/4.5 (visibility sampling + occlusion) arrive in M3, 4.6
-// (chaining + suppression) in M4. Until M3 the public entry point runs in
-// x-ray mode: every candidate edge is emitted as visible.
+// M3 status: stages 4.2 (classify), 4.3 (project), 4.4/4.5 (visibility
+// sampling + occlusion) and 4.7 (canonicalize) are live; 4.6 (chaining +
+// coincidence suppression) lands in M4 — until then
+// `suppressHiddenCoincidentWithVisible` is accepted but has no effect.
 
 /// Converts a mesh + orthographic view + options into a hidden-line-removed
 /// 2D line drawing. Pure function: same inputs, same output, always.
 public func makeLineDrawing(mesh: Mesh,
                             view: OrthographicView,
                             options: DrawingOptions = .init()) -> LineDrawing {
-    runPipeline(mesh: mesh, view: view, options: options, mode: .xray)
+    runPipeline(mesh: mesh, view: view, options: options, mode: .full)
 }
 
 /// Internal pipeline mode. `.xray` skips occlusion and emits every candidate
-/// edge as visible — used for M2 goldens and kept for debugging.
+/// edge as visible — kept for debugging and stage-isolated tests.
 enum PipelineMode: Sendable {
     case xray
+    case full
 }
 
 func runPipeline(mesh: Mesh,
@@ -44,14 +45,32 @@ func runPipeline(mesh: Mesh,
     let segments = projectCandidates(candidates, mesh: mesh, projected: projected,
                                      tolerances: tolerances)
 
-    // Stages 4.4–4.6 land in M3/M4. X-ray: every candidate is visible.
     switch mode {
     case .xray:
+        // Occlusion skipped: every candidate emitted visible, whole.
         let paths = segments.map {
             LineDrawing.Path(points: [SIMD2($0.start.x, $0.start.y),
                                       SIMD2($0.end.x, $0.end.y)],
                              kind: .visible)
         }
+        return LineDrawing(canonicalizing: paths)
+
+    case .full:
+        // Stages 4.4 + 4.5 — visibility sampling against the occluder BVH.
+        let tester = OcclusionTester(mesh: mesh, projected: projected, tolerances: tolerances)
+        var paths: [LineDrawing.Path] = []
+        for segment in segments {
+            let ownFaces = mesh.edges[segment.edgeIndex].faces
+            for run in visibilityRuns(for: segment, ownFaces: ownFaces,
+                                      tester: tester, tolerances: tolerances) {
+                if run.hidden && !options.includeHiddenLines { continue }
+                paths.append(LineDrawing.Path(
+                    points: [segment.point(at: run.tStart), segment.point(at: run.tEnd)],
+                    kind: run.hidden ? .hidden : .visible
+                ))
+            }
+        }
+        // Stage 4.6 (chaining + coincidence suppression) lands in M4.
         // Stage 4.7 — canonical ordering & tight bounds.
         return LineDrawing(canonicalizing: paths)
     }
@@ -110,6 +129,15 @@ struct ProjectedEdge: Sendable, Equatable {
     var edgeIndex: Int          // into mesh.edges
     var start: SIMD3<Double>    // (screenX, screenY, depth)
     var end: SIMD3<Double>
+
+    /// 2D point at parameter t along the segment; bitwise-exact endpoints at
+    /// t = 0 and t = 1 (fully-visible edges emit their exact projections).
+    func point(at t: Double) -> SIMD2<Double> {
+        if t == 0 { return SIMD2(start.x, start.y) }
+        if t == 1 { return SIMD2(end.x, end.y) }
+        let p = start + t * (end - start)
+        return SIMD2(p.x, p.y)
+    }
 }
 
 func projectPositions(_ positions: [SIMD3<Double>], view: OrthographicView) -> [SIMD3<Double>] {

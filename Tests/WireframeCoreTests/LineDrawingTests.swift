@@ -87,13 +87,15 @@ struct CanonicalOrderingTests {
     }
 }
 
-@Suite("X-ray pipeline (M2: every candidate emitted visible)")
+@Suite("Pipeline modes & graceful degradation")
 struct XRayPipelineTests {
 
     @Test func cubeFrontXRay() {
-        let drawing = makeLineDrawing(mesh: Fixtures.cube(), view: .front)
+        let drawing = runPipeline(mesh: Fixtures.cube(), view: .front,
+                                  options: .init(), mode: .xray)
         // 12 crease candidates − 4 depth-parallel edges = 8 segments: the
-        // front square and the back square projected onto it.
+        // front square and the back square projected onto it, all visible
+        // because x-ray mode skips occlusion.
         #expect(drawing.paths.count == 8)
         #expect(drawing.paths.allSatisfy { $0.kind == .visible })
         #expect(drawing.paths.allSatisfy { $0.points.count == 2 })
@@ -105,9 +107,11 @@ struct XRayPipelineTests {
     }
 
     @Test func cubeIsometricXRay() {
-        let drawing = makeLineDrawing(mesh: Fixtures.cube(), view: .isometric)
+        let drawing = runPipeline(mesh: Fixtures.cube(), view: .isometric,
+                                  options: .init(), mode: .xray)
         // All 12 edges survive in iso — none is view-parallel.
         #expect(drawing.paths.count == 12)
+        #expect(drawing.paths.allSatisfy { $0.kind == .visible })
     }
 
     @Test func identicalRunsProduceIdenticalJSON() throws {
@@ -169,8 +173,9 @@ struct SVGTests {
         #expect(svg.hasSuffix("</svg>\n"))
         // Bounds 1×1 + margins → viewBox 0 0 5 5.
         #expect(svg.contains("viewBox=\"0 0 5.0 5.0\""))
+        // 4 visible front edges + 4 hidden (unsuppressed until M4) back edges.
         #expect(svg.components(separatedBy: "<polyline").count - 1 == 8)
-        #expect(!svg.contains("stroke-dasharray"), "x-ray output has no hidden paths")
+        #expect(svg.contains("stroke-dasharray"), "hidden paths render dashed")
     }
 
     @Test func svgIsYFlipped() {

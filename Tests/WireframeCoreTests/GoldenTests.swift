@@ -11,26 +11,28 @@ import Testing
 // Regenerate: RECORD_GOLDENS=1 swift test
 // (recording deliberately fails the run so it can't silently pass CI)
 
-@Suite("Golden drawings (x-ray mode, M2)")
+@Suite("Golden drawings (hidden-line removal)")
 struct GoldenTests {
 
-    static let names = [
-        "cube-front-xray", "cube-top-xray", "cube-iso-xray",
-        "cylinder-front-xray", "cylinder-top-xray", "cylinder-iso-xray",
-        "lbracket-front-xray", "lbracket-top-xray", "lbracket-iso-xray",
-    ]
+    static let fixtures = ["cube", "cylinder", "lbracket", "twoboxes"]
+    static let views = ["front", "top", "right", "iso"]
+    static let names = fixtures.flatMap { fixture in
+        views.map { "\(fixture)-\($0)" }
+    }
 
     static func drawing(for name: String) -> LineDrawing {
         let mesh: Mesh
         switch name.split(separator: "-")[0] {
         case "cube": mesh = Fixtures.cube()
         case "cylinder": mesh = Fixtures.cylinder()
+        case "twoboxes": mesh = Fixtures.twoOffsetBoxes()
         default: mesh = Fixtures.lBracket()
         }
         let view: OrthographicView
         switch name.split(separator: "-")[1] {
         case "front": view = .front
         case "top": view = .top
+        case "right": view = .right
         default: view = .isometric
         }
         return makeLineDrawing(mesh: mesh, view: view)
