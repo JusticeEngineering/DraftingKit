@@ -21,16 +21,26 @@ public func makeLineDrawing(mesh: Mesh,
 
 /// Parallel variant: identical output to the synchronous form (deterministic
 /// by construction), computed via a TaskGroup over edge chunks.
+///
+/// Every stage — including the serial ones (projection, BVH build, chaining)
+/// — runs inside child tasks on the global executor, so calling this from
+/// the main actor never blocks UI no matter how heavy the mesh is.
 public func makeLineDrawing(mesh: Mesh,
                             view: OrthographicView,
                             options: DrawingOptions = .init()) async -> LineDrawing {
-    guard let scene = prepareScene(mesh: mesh, view: view, options: options) else {
-        return LineDrawing(canonicalizing: [])
+    await withTaskGroup(of: LineDrawing.self) { group in
+        group.addTask {
+            guard let scene = prepareScene(mesh: mesh, view: view, options: options) else {
+                return LineDrawing(canonicalizing: [])
+            }
+            let tester = OcclusionTester(mesh: mesh, projected: scene.projected,
+                                         tolerances: scene.tolerances)
+            let runs = await computeRunsParallel(scene: scene, tester: tester)
+            return finishFullDrawing(runsPerSegment: runs, scene: scene)
+        }
+        // Exactly one child task.
+        return await group.next() ?? LineDrawing(canonicalizing: [])
     }
-    let tester = OcclusionTester(mesh: mesh, projected: scene.projected,
-                                 tolerances: scene.tolerances)
-    let runs = await computeRunsParallel(scene: scene, tester: tester)
-    return finishFullDrawing(runsPerSegment: runs, scene: scene)
 }
 
 /// Internal pipeline mode. `.xray` skips occlusion and emits every candidate

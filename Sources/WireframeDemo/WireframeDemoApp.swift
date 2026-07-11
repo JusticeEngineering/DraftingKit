@@ -21,10 +21,10 @@ import WireframeModelIO
 
 @main
 enum Entry {
-    static func main() {
+    static func main() async {
         let arguments = CommandLine.arguments
         if arguments.count >= 3, arguments[1] == "bench" {
-            runBenchmark(path: arguments[2])
+            await runBenchmark(path: arguments[2])
         } else {
             WireframeDemoApp.main()
         }
@@ -33,7 +33,7 @@ enum Entry {
 
 // MARK: - Headless benchmark
 
-private func runBenchmark(path: String) {
+private func runBenchmark(path: String) async {
     let clock = ContinuousClock()
     var diagnostics = MeshDiagnostics()
     print("importing \(path) …")
@@ -57,8 +57,166 @@ private func runBenchmark(path: String) {
         }
         let visible = drawing?.paths.count { $0.kind == .visible } ?? 0
         let hidden = (drawing?.paths.count ?? 0) - visible
-        print("\(name): \(drawTime) — \(visible) visible + \(hidden) hidden paths")
+        let renderStart = clock.now
+        let bitmap = drawing == nil ? nil : await renderDisplayBitmap(for: drawing!)
+        let renderTime = clock.now - renderStart
+        print("\(name): \(drawTime) — \(visible) visible + \(hidden) hidden paths; "
+            + "display render \(renderTime) (\(bitmap == nil ? "FAILED" : "ok"))")
     }
+}
+
+// MARK: - Display rasterizer
+
+/// Geometry of the display bitmap (~1600px long side).
+private struct DisplayLayout: Sendable {
+    let scale: Double
+    let margin = 24.0
+    let width: Int
+    let height: Int
+    let boundsMin: SIMD2<Double>
+
+    init?(drawing: LineDrawing) {
+        let maxDimension = Swift.max(drawing.bounds.size.x, drawing.bounds.size.y)
+        guard !drawing.paths.isEmpty, maxDimension > 0 else { return nil }
+        scale = 1600 / maxDimension
+        width = Int((drawing.bounds.size.x * scale + 2 * margin).rounded(.up))
+        height = Int((drawing.bounds.size.y * scale + 2 * margin).rounded(.up))
+        boundsMin = drawing.bounds.min
+    }
+
+    func apply(to context: CGContext) {
+        context.translateBy(x: CGFloat(margin), y: CGFloat(margin))
+        context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+        context.translateBy(x: CGFloat(-boundsMin.x), y: CGFloat(-boundsMin.y))
+        context.setLineCap(.butt)
+        context.setLineJoin(.miter)
+    }
+}
+
+private struct StrokeStyle: Sendable {
+    var gray: Double
+    var width: Double        // pixels
+    var dash: [Double]       // pixels; empty = solid
+    /// Antialiasing is disabled for enormous drawings — AA dominates
+    /// thin-line stroking cost, and preview jaggies beat multi-second waits.
+    var antialiased = true
+}
+
+/// Renders a drawing into a display bitmap. CoreGraphics stroking of
+/// scan-scale drawings (500k+ subpaths) takes tens of seconds in a single
+/// context, so the paths are split across parallel transparent layers that
+/// stroke concurrently and composite at the end (hidden under visible —
+/// same-style layers composite order-free). Cancellation is checked between
+/// stroke batches, so superseded renders abort quickly.
+private func renderDisplayBitmap(for drawing: LineDrawing,
+                                 lineWidth: Double = 1.6) async -> CGImage? {
+    guard let layout = DisplayLayout(drawing: drawing) else { return nil }
+    let hidden = drawing.paths.filter { $0.kind == .hidden }
+    let visible = drawing.paths.filter { $0.kind == .visible }
+    // Dashing hundreds of thousands of subpaths is pathological in CG; a
+    // thin gray solid line reads as "hidden" at a fraction of the cost.
+    let antialiased = drawing.paths.count <= 150_000
+    let hiddenWidth = lineWidth * 0.625
+    let hiddenStyle = hidden.count <= 30_000
+        ? StrokeStyle(gray: 0, width: hiddenWidth, dash: [6, 4], antialiased: antialiased)
+        : StrokeStyle(gray: 0.55, width: hiddenWidth, dash: [], antialiased: antialiased)
+    let visibleStyle = StrokeStyle(gray: 0, width: lineWidth, dash: [], antialiased: antialiased)
+
+    let layerSlices = slices(hidden, style: hiddenStyle, from: 0)
+        + slices(visible, style: visibleStyle, from: 1_000)
+
+    return await withTaskGroup(of: CGImage??.self) { group in
+        group.addTask {
+            await renderLayersAndComposite(layerSlices, layout: layout)
+        }
+        return await group.next().flatMap { $0 } ?? nil
+    }
+}
+
+private func slices(_ paths: [LineDrawing.Path],
+                    style: StrokeStyle,
+                    from orderBase: Int) -> [(order: Int, style: StrokeStyle, paths: [LineDrawing.Path])] {
+    guard !paths.isEmpty else { return [] }
+    let sliceCount = Swift.min(8, Swift.max(1, paths.count / 8_000))
+    let sliceSize = (paths.count + sliceCount - 1) / sliceCount
+    return stride(from: 0, to: paths.count, by: sliceSize).enumerated().map { index, start in
+        (orderBase + index, style, Array(paths[start..<Swift.min(start + sliceSize, paths.count)]))
+    }
+}
+
+private func renderLayersAndComposite(
+    _ layers: [(order: Int, style: StrokeStyle, paths: [LineDrawing.Path])],
+    layout: DisplayLayout
+) async -> CGImage? {
+    let rendered: [(Int, CGImage)]? = await withTaskGroup(of: (Int, CGImage?).self) { group in
+        for layer in layers {
+            group.addTask {
+                (layer.order, renderLayer(layer.paths, style: layer.style, layout: layout))
+            }
+        }
+        var collected: [(Int, CGImage)] = []
+        for await (order, image) in group {
+            guard let image else {
+                group.cancelAll()
+                return nil
+            }
+            collected.append((order, image))
+        }
+        return collected
+    }
+    guard var images = rendered else { return nil }
+    images.sort { $0.0 < $1.0 }  // hidden layers first, then visible
+
+    guard let base = CGContext(
+        data: nil, width: layout.width, height: layout.height,
+        bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return nil }
+    let full = CGRect(x: 0, y: 0, width: CGFloat(layout.width), height: CGFloat(layout.height))
+    base.setFillColor(CGColor(gray: 1, alpha: 1))
+    base.fill(full)
+    for (_, image) in images {
+        if Task.isCancelled { return nil }
+        base.draw(image, in: full)
+    }
+    return base.makeImage()
+}
+
+/// One transparent layer, stroked in cancellation-checked batches.
+private func renderLayer(_ paths: [LineDrawing.Path],
+                         style: StrokeStyle,
+                         layout: DisplayLayout) -> CGImage? {
+    guard let context = CGContext(
+        data: nil, width: layout.width, height: layout.height,
+        bitsPerComponent: 8, bytesPerRow: 0,
+        space: CGColorSpaceCreateDeviceRGB(),
+        bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+    ) else { return nil }
+    layout.apply(to: context)
+    context.setShouldAntialias(style.antialiased)
+    context.setStrokeColor(CGColor(gray: style.gray, alpha: 1))
+    context.setLineWidth(CGFloat(style.width / layout.scale))
+    if !style.dash.isEmpty {
+        context.setLineDash(phase: 0, lengths: style.dash.map { CGFloat($0 / layout.scale) })
+    }
+
+    var index = 0
+    while index < paths.count {
+        if Task.isCancelled { return nil }
+        let batch = CGMutablePath()
+        for path in paths[index..<Swift.min(index + 10_000, paths.count)] {
+            guard let first = path.points.first else { continue }
+            batch.move(to: CGPoint(x: first.x, y: first.y))
+            for point in path.points.dropFirst() {
+                batch.addLine(to: CGPoint(x: point.x, y: point.y))
+            }
+        }
+        context.addPath(batch)
+        context.strokePath()
+        index += 10_000
+    }
+    return context.makeImage()
 }
 
 // MARK: - App
@@ -127,10 +285,14 @@ struct ContentView: View {
     @State private var importerShown = false
     @State private var importing = false
     @State private var computing = false
-    /// Stale-result guard: bumped whenever a compute task starts; results
+    /// Stale-result guards: bumped whenever a compute/render starts; results
     /// from an older generation are discarded (makeLineDrawing itself is not
     /// cancellable mid-flight).
     @State private var computeGeneration = 0
+    @State private var renderGeneration = 0
+    /// Visible stroke width in display pixels / export points; hidden lines
+    /// render at 62.5% of it.
+    @State private var lineWidth = 1.6
 
     private let modelTypes: [UTType] = [
         UTType(filenameExtension: "stl"),
@@ -151,6 +313,12 @@ struct ContentView: View {
             guard mesh != nil else { return }
             do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
             await recompute()
+        }
+        .task(id: lineWidth) {
+            // Width changes only re-render the cached drawing.
+            guard drawing != nil else { return }
+            do { try await Task.sleep(for: .milliseconds(150)) } catch { return }
+            await rerender()
         }
     }
 
@@ -229,11 +397,16 @@ struct ContentView: View {
                 if !computeInfo.isEmpty {
                     Text(computeInfo).font(.caption).foregroundStyle(.secondary)
                 }
+                slider("Line width", $lineWidth, 0.4...4.0,
+                       format: { String(format: "%.1f", $0) })
                 LabeledContent("Export scale") {
                     HStack(spacing: 4) {
                         TextField("", text: $exportScale)
                             .frame(width: 64)
                         Text("pt / unit").font(.caption).foregroundStyle(.secondary)
+                        Button("Fit") { fitExportScale() }
+                            .controlSize(.small)
+                            .help("Scale so the drawing's long side is ~1000pt (fits on paper; PDF pages cap at 14,400pt)")
                     }
                 }
                 HStack {
@@ -257,11 +430,12 @@ struct ContentView: View {
 
     private func slider(_ label: String,
                         _ value: Binding<Double>,
-                        _ range: ClosedRange<Double>) -> some View {
+                        _ range: ClosedRange<Double>,
+                        format: @escaping (Double) -> String = { "\(Int($0))°" }) -> some View {
         LabeledContent(label) {
             HStack {
                 Slider(value: value, in: range)
-                Text("\(Int(value.wrappedValue))°")
+                Text(format(value.wrappedValue))
                     .font(.caption.monospacedDigit())
                     .frame(width: 38, alignment: .trailing)
             }
@@ -305,6 +479,15 @@ struct ContentView: View {
         do {
             let (loaded, diagnostics, elapsed) = try await Self.importMesh(url)
             mesh = loaded
+            // Default the export scale to something printable: a 600mm model
+            // at 72 pt/unit would be a ~43,000pt page — past the 14,400pt
+            // PDF limit and blank-looking in viewers.
+            let box = loaded.boundingBox
+            let extent = box.max - box.min
+            let maxDimension = Swift.max(extent.x, Swift.max(extent.y, extent.z))
+            if maxDimension > 0 {
+                exportScale = String(format: "%.3g", 1000 / maxDimension)
+            }
             meshInfo = "\(url.lastPathComponent) — \(loaded.triangles.count) triangles, "
                 + "\(loaded.positions.count) vertices (\(Self.seconds(elapsed)))"
             diagnosticsInfo = "dropped \(diagnostics.degenerateTrianglesDropped) degenerate, "
@@ -316,17 +499,24 @@ struct ContentView: View {
         }
     }
 
-    /// nonisolated async ⇒ runs on the cooperative pool, not the main actor.
+    /// Import in a child task: child tasks always run on the global executor,
+    /// unlike nonisolated async functions, which run on the CALLER's actor —
+    /// on this toolchain that means the main thread.
     private nonisolated static func importMesh(_ url: URL) async throws
         -> (Mesh, MeshDiagnostics, Duration)
     {
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-        var diagnostics = MeshDiagnostics()
-        let clock = ContinuousClock()
-        let start = clock.now
-        let mesh = try MeshImport.mesh(contentsOf: url, diagnostics: &diagnostics)
-        return (mesh, diagnostics, clock.now - start)
+        try await withThrowingTaskGroup(of: (Mesh, MeshDiagnostics, Duration).self) { group in
+            group.addTask {
+                let accessing = url.startAccessingSecurityScopedResource()
+                defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+                var diagnostics = MeshDiagnostics()
+                let clock = ContinuousClock()
+                let start = clock.now
+                let mesh = try MeshImport.mesh(contentsOf: url, diagnostics: &diagnostics)
+                return (mesh, diagnostics, clock.now - start)
+            }
+            return try await group.next()!
+        }
     }
 
     private func recompute() async {
@@ -348,11 +538,14 @@ struct ContentView: View {
         guard generation == computeGeneration else { return }
         drawing = result
 
-        // Rasterize off the main actor — at scan scale a drawing can hold
-        // hundreds of thousands of paths, and stroking those on main is a
-        // beachball. The main thread only wraps the finished bitmap.
-        let rendered = await Self.renderBitmap(for: result)
-        guard generation == computeGeneration else { return }
+        // Rasterize in a child task (global executor, inherits cancellation)
+        // — at scan scale a drawing can hold hundreds of thousands of paths,
+        // and stroking those on main is a beachball. The main thread only
+        // wraps the finished bitmap.
+        renderGeneration += 1
+        let render = renderGeneration
+        let rendered = await Self.renderOffMain(result, lineWidth: lineWidth)
+        guard generation == computeGeneration, render == renderGeneration else { return }
         computing = false
         image = rendered.map { NSImage(cgImage: $0, size: .zero) }
         let visible = result.paths.count { $0.kind == .visible }
@@ -361,48 +554,26 @@ struct ContentView: View {
             + "(+ \(Self.seconds(clock.now - start - computeElapsed)) render)"
     }
 
-    /// Renders the drawing into a bitmap sized ~2200px on the long side,
-    /// off the main actor (nonisolated async ⇒ cooperative pool). Display
-    /// only — export still goes through the vector PDF/SVG paths.
-    private nonisolated static func renderBitmap(for drawing: LineDrawing) async -> CGImage? {
-        guard !drawing.paths.isEmpty else { return nil }
-        let maxDimension = Swift.max(drawing.bounds.size.x, drawing.bounds.size.y)
-        guard maxDimension > 0 else { return nil }
-        let scale = 2200 / maxDimension
-        let margin = 24.0
-        let width = Int((drawing.bounds.size.x * scale + 2 * margin).rounded(.up))
-        let height = Int((drawing.bounds.size.y * scale + 2 * margin).rounded(.up))
-        guard let context = CGContext(
-            data: nil, width: width, height: height,
-            bitsPerComponent: 8, bytesPerRow: 0,
-            space: CGColorSpaceCreateDeviceRGB(),
-            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
-
-        context.setFillColor(CGColor(gray: 1, alpha: 1))
-        context.fill(CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
-        context.translateBy(x: CGFloat(margin), y: CGFloat(margin))
-        context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
-        context.translateBy(x: CGFloat(-drawing.bounds.min.x), y: CGFloat(-drawing.bounds.min.y))
-        context.setStrokeColor(CGColor(gray: 0, alpha: 1))
-        context.setLineCap(.round)
-        context.setLineJoin(.round)
-
-        let hidden = drawing.cgPath(for: .hidden)
-        if !hidden.isEmpty {
-            context.setLineWidth(CGFloat(1.0 / scale))
-            context.setLineDash(phase: 0, lengths: [CGFloat(6 / scale), CGFloat(4 / scale)])
-            context.addPath(hidden)
-            context.strokePath()
+    /// Re-render the cached drawing (line width changed) — no pipeline run.
+    private func rerender() async {
+        guard let drawing else { return }
+        renderGeneration += 1
+        let render = renderGeneration
+        computing = true
+        let rendered = await Self.renderOffMain(drawing, lineWidth: lineWidth)
+        guard render == renderGeneration else { return }
+        computing = false
+        if let rendered {
+            image = NSImage(cgImage: rendered, size: .zero)
         }
-        let visible = drawing.cgPath(for: .visible)
-        if !visible.isEmpty {
-            context.setLineWidth(CGFloat(1.6 / scale))
-            context.setLineDash(phase: 0, lengths: [])
-            context.addPath(visible)
-            context.strokePath()
-        }
-        return context.makeImage()
+    }
+
+    /// The rasterizer runs its work in child tasks (global executor) and
+    /// inherits cancellation from the surrounding .task, so a superseded
+    /// render aborts at the next batch boundary.
+    private nonisolated static func renderOffMain(_ drawing: LineDrawing,
+                                                  lineWidth: Double) async -> CGImage? {
+        await renderDisplayBitmap(for: drawing, lineWidth: lineWidth)
     }
 
     private static func seconds(_ duration: Duration) -> String {
@@ -411,18 +582,29 @@ struct ContentView: View {
         return String(format: "%.2fs", s)
     }
 
+    /// Scale so the CURRENT drawing's long side lands at ~1000pt.
+    private func fitExportScale() {
+        guard let drawing else { return }
+        let maxDimension = Swift.max(drawing.bounds.size.x, drawing.bounds.size.y)
+        guard maxDimension > 0 else { return }
+        exportScale = String(format: "%.3g", 1000 / maxDimension)
+    }
+
     private func savePDF() {
         guard let drawing else { return }
         let scale = Double(exportScale) ?? 72
         var mutableStyle = PDFStyle(pointsPerModelUnit: scale)
         mutableStyle.margin = 18
+        mutableStyle.visibleLineWidth = lineWidth
+        mutableStyle.hiddenLineWidth = lineWidth * 0.625
         let style = mutableStyle
         save(type: .pdf, name: "wireframe.pdf") { drawing.pdfData(style: style) }
     }
 
     private func saveSVG() {
         guard let drawing else { return }
-        save(type: .svg, name: "wireframe.svg") { Data(drawing.svg().utf8) }
+        let strokeWidth = lineWidth
+        save(type: .svg, name: "wireframe.svg") { Data(drawing.svg(strokeWidth: strokeWidth).utf8) }
     }
 
     /// Panel on main; encoding + writing off main (a scan-scale drawing takes
