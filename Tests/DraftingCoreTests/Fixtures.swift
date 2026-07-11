@@ -49,8 +49,13 @@ enum Fixtures {
     static func cylinder(radius: Double = 1, height: Double = 2, radialSegments n: Int = 24) -> Mesh {
         var positions: [SIMD3<Double>] = []
         for i in 0..<n {  // bottom ring: 0..<n
-            let angle = 2 * Double.pi * Double(i) / Double(n)
-            positions.append(SIMD3(radius * cos(angle), radius * sin(angle), 0))
+            // Core's deterministic degree-domain trig, NOT Foundation's:
+            // glibc and Apple libm differ in last ulps, and near-tangent
+            // views (cylinder top) amplify that into flipped sample verdicts.
+            // This keeps the fixture — and its goldens — bit-identical on
+            // macOS and Linux.
+            let angle = Double(i) * 360 / Double(n)
+            positions.append(SIMD3(radius * cosDegrees(angle), radius * sinDegrees(angle), 0))
         }
         for i in 0..<n {  // top ring: n..<2n
             positions.append(SIMD3(positions[i].x, positions[i].y, height))
