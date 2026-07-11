@@ -116,6 +116,47 @@ enum Fixtures {
         return try! Mesh(positions: positions, triangles: triangles)
     }
 
+    /// Unit cube with each face subdivided into perSide × perSide quads
+    /// (12 × perSide² triangles) — the performance-smoke mesh. Vertices are
+    /// deduplicated via exact integer grid keys, so the mesh is closed and
+    /// manifold; the only candidate edges are the 12 original cube edges.
+    static func subdividedCube(perSide k: Int) -> Mesh {
+        var vertexIndex: [SIMD3<Int>: Int] = [:]
+        var positions: [SIMD3<Double>] = []
+        var triangles: [SIMD3<Int>] = []
+
+        func vertex(_ g: SIMD3<Int>) -> Int {
+            if let existing = vertexIndex[g] { return existing }
+            let index = positions.count
+            vertexIndex[g] = index
+            positions.append(SIMD3(Double(g.x), Double(g.y), Double(g.z)) / Double(k))
+            return index
+        }
+
+        // (origin, uAxis, vAxis) per face, with cross(u, v) pointing outward.
+        let faces: [(SIMD3<Int>, SIMD3<Int>, SIMD3<Int>)] = [
+            (SIMD3(0, 0, 0), SIMD3(0, 1, 0), SIMD3(1, 0, 0)),  // bottom -Z
+            (SIMD3(0, 0, k), SIMD3(1, 0, 0), SIMD3(0, 1, 0)),  // top    +Z
+            (SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 0, 1)),  // front  -Y
+            (SIMD3(0, k, 0), SIMD3(0, 0, 1), SIMD3(1, 0, 0)),  // back   +Y
+            (SIMD3(0, 0, 0), SIMD3(0, 0, 1), SIMD3(0, 1, 0)),  // left   -X
+            (SIMD3(k, 0, 0), SIMD3(0, 1, 0), SIMD3(0, 0, 1)),  // right  +X
+        ]
+        for (origin, u, v) in faces {
+            for i in 0..<k {
+                for j in 0..<k {
+                    let c00 = vertex(origin &+ i &* u &+ j &* v)
+                    let c10 = vertex(origin &+ (i + 1) &* u &+ j &* v)
+                    let c11 = vertex(origin &+ (i + 1) &* u &+ (j + 1) &* v)
+                    let c01 = vertex(origin &+ i &* u &+ (j + 1) &* v)
+                    triangles.append(SIMD3(c00, c10, c11))
+                    triangles.append(SIMD3(c00, c11, c01))
+                }
+            }
+        }
+        return try! Mesh(positions: positions, triangles: triangles)
+    }
+
     /// Signed volume via the divergence theorem: positive iff the mesh is
     /// closed and consistently outward-wound. Cheap winding sanity check.
     static func signedVolume(of mesh: Mesh) -> Double {

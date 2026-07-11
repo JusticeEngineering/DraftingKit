@@ -43,6 +43,12 @@ struct InvariantTests {
         let visibleOnly = makeLineDrawing(mesh: Fixtures.cube(), view: .front, options: options)
         #expect(visibleOnly.paths.count == 4)
         #expect(visibleOnly.paths.allSatisfy { $0.kind == .visible })
+
+        // With suppression (the default): the hidden square coincides with
+        // the visible one and disappears — 4 visible, 0 hidden.
+        let suppressed = makeLineDrawing(mesh: Fixtures.cube(), view: .front)
+        #expect(suppressed.paths.count == 4)
+        #expect(suppressed.paths.allSatisfy { $0.kind == .visible })
     }
 
     // Invariant 2 — cube, isometric: the classic 9 visible + 3 hidden.
@@ -71,8 +77,11 @@ struct InvariantTests {
         let visible = drawing.paths.filter { $0.kind == .visible }
 
         // Exactly 2 straight visible silhouette lines at screenX = ±radius.
+        // (Verticality is part of the filter: chained cap lines also END at
+        // x = ±radius but run horizontally.)
         let silhouettes = visible.filter { path in
             path.points.allSatisfy { abs(abs($0.x) - radius) <= 1e-6 }
+                && abs(path.points[0].x - path.points[path.points.count - 1].x) <= 1e-6
         }
         #expect(silhouettes.count == 2)
         for path in silhouettes {
@@ -126,5 +135,28 @@ struct InvariantTests {
         #expect(bottomFarHidden.contains { path in
             path.points.contains { abs($0.x - 1) <= 1e-3 }
         }, "far bottom edge's hidden run should end at the near box boundary")
+    }
+
+    // Invariant 4, exact spec form (suppression ON, the default): every
+    // remaining hidden path lies inside the near box's projected rectangle —
+    // coincident duplicates (near-box back edges, far-box back edges over
+    // their visible front edges) are suppressed, leaving only the dashes
+    // caused by real near-box occlusion.
+    @Test func twoOffsetBoxesSuppressedHiddenLiesInsideNearRect() {
+        let mesh = Fixtures.twoOffsetBoxes()
+        let drawing = makeLineDrawing(mesh: mesh, view: .front)
+        let hidden = drawing.paths.filter { $0.kind == .hidden }
+        #expect(!hidden.isEmpty, "far box must still have hidden paths")
+
+        // Grow the near rectangle by 2 × bisection tolerance — transitions
+        // are localized within that.
+        let scene = prepareScene(mesh: mesh, view: .front, options: .init())!
+        let grow = 2 * scene.tolerances.bisectionTolerance
+        for path in hidden {
+            for p in path.points {
+                #expect(p.x >= -grow && p.x <= 1 + grow && p.y >= -grow && p.y <= 1 + grow,
+                        "hidden point \(p) must lie inside the near box's rectangle")
+            }
+        }
     }
 }

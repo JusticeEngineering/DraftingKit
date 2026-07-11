@@ -33,6 +33,8 @@ struct Tolerances: Sendable {
     var coincidenceTolerance: Double
     /// Occluders with projected area below s² don't count (4.5).
     var minOccluderArea: Double
+    /// Chaining: |cross| of unit directions below this is collinear (4.6).
+    var chainDirectionCross: Double
     /// |dot(normal, forward)| below this is its own sign class (4.2).
     var grazingDot: Double
     /// dot(n1, n2) below this ⇒ dihedral angle exceeds the crease angle.
@@ -47,6 +49,7 @@ struct Tolerances: Sendable {
         chainEndpointTolerance = s / 16
         coincidenceTolerance = s / 4
         minOccluderArea = s * s
+        chainDirectionCross = 1e-9
         grazingDot = 1e-12
         creaseCosineThreshold = cosDegrees(options.creaseAngleDegrees)
     }

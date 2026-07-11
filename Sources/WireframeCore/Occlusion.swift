@@ -108,6 +108,27 @@ struct BVH: Sendable, Equatable {
         nodes[Int(nodeIndex)].count = 0
         return nodeIndex
     }
+
+    /// Appends the item indices of every leaf whose AABB intersects `box`
+    /// (min.x, min.y, max.x, max.y). Traversal order is fixed → deterministic.
+    func collectIntersecting(_ box: SIMD4<Double>, into result: inout [Int]) {
+        guard !nodes.isEmpty else { return }
+        collect(node: 0, box: box, into: &result)
+    }
+
+    private func collect(node index: Int32, box: SIMD4<Double>, into result: inout [Int]) {
+        let node = nodes[Int(index)]
+        guard box.x <= node.maxX, box.z >= node.minX,
+              box.y <= node.maxY, box.w >= node.minY else { return }
+        if node.left < 0 {
+            for i in Int(node.start)..<Int(node.start + node.count) {
+                result.append(order[i])
+            }
+            return
+        }
+        collect(node: node.left, box: box, into: &result)
+        collect(node: node.right, box: box, into: &result)
+    }
 }
 
 /// Prepared per-view occlusion query structure (Sendable: shared read-only

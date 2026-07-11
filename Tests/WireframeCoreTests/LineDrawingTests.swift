@@ -141,7 +141,9 @@ struct XRayPipelineTests {
             diagnostics: &diag
         )
         let drawing = makeLineDrawing(mesh: flat, view: .front)
-        #expect(drawing.paths.count == 3)
+        // The 3 boundary edges all project onto y = 0; the two apex edges
+        // chain into one span, the base edge stays separate (a foldback).
+        #expect(drawing.paths.count == 2)
         #expect(drawing.paths.allSatisfy { path in path.points.allSatisfy { $0.y == 0 } })
     }
 
@@ -173,9 +175,9 @@ struct SVGTests {
         #expect(svg.hasSuffix("</svg>\n"))
         // Bounds 1×1 + margins → viewBox 0 0 5 5.
         #expect(svg.contains("viewBox=\"0 0 5.0 5.0\""))
-        // 4 visible front edges + 4 hidden (unsuppressed until M4) back edges.
-        #expect(svg.components(separatedBy: "<polyline").count - 1 == 8)
-        #expect(svg.contains("stroke-dasharray"), "hidden paths render dashed")
+        // Defaults suppress the coincident back edges: 4 visible paths only.
+        #expect(svg.components(separatedBy: "<polyline").count - 1 == 4)
+        #expect(!svg.contains("stroke-dasharray"), "coincident hidden edges are suppressed")
     }
 
     @Test func svgIsYFlipped() {

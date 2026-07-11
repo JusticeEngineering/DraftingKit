@@ -10,15 +10,7 @@
     <polyline points="3.5,3.0 3.5,2.0"/>
   </g>
   <g class="hidden" fill="none" stroke="black" stroke-width="1.0" stroke-dasharray="4.0 3.0">
-    <polyline points="2.0,3.5 2.0,2.5"/>
-    <polyline points="2.0,3.5 3.0,3.5"/>
-    <polyline points="2.0,2.5 3.0,2.5"/>
     <polyline points="2.5,3.0 2.5,2.499991929235537"/>
-    <polyline points="2.5,3.0 2.5,2.0"/>
     <polyline points="2.5,3.0 3.000008070764463,3.0"/>
-    <polyline points="2.5,3.0 3.5,3.0"/>
-    <polyline points="2.5,2.0 3.5,2.0"/>
-    <polyline points="3.0,3.5 3.0,2.5"/>
-    <polyline points="3.5,3.0 3.5,2.0"/>
   </g>
 </svg>

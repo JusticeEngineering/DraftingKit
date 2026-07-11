@@ -1,17 +1,36 @@
 // The makeLineDrawing pipeline (SPEC.md §4). Each stage is a separate
 // internal function with its own unit tests — stages are module boundaries.
 //
-// M3 status: stages 4.2 (classify), 4.3 (project), 4.4/4.5 (visibility
-// sampling + occlusion) and 4.7 (canonicalize) are live; 4.6 (chaining +
-// coincidence suppression) lands in M4 — until then
-// `suppressHiddenCoincidentWithVisible` is accepted but has no effect.
+// All seven stages are live as of M4. Execution: the synchronous entry point
+// runs the per-edge visibility work serially; the async overload fans it out
+// over a TaskGroup in edge-index chunks, writing into an index-addressed
+// results array (constraint C3) — both produce byte-identical output
+// (invariant 6).
 
 /// Converts a mesh + orthographic view + options into a hidden-line-removed
 /// 2D line drawing. Pure function: same inputs, same output, always.
+///
+/// This synchronous form computes serially. In an async context, prefer
+/// `await makeLineDrawing(...)`, which parallelizes the visibility sampling
+/// and returns bit-identical results.
 public func makeLineDrawing(mesh: Mesh,
                             view: OrthographicView,
                             options: DrawingOptions = .init()) -> LineDrawing {
     runPipeline(mesh: mesh, view: view, options: options, mode: .full)
+}
+
+/// Parallel variant: identical output to the synchronous form (deterministic
+/// by construction), computed via a TaskGroup over edge chunks.
+public func makeLineDrawing(mesh: Mesh,
+                            view: OrthographicView,
+                            options: DrawingOptions = .init()) async -> LineDrawing {
+    guard let scene = prepareScene(mesh: mesh, view: view, options: options) else {
+        return LineDrawing(canonicalizing: [])
+    }
+    let tester = OcclusionTester(mesh: mesh, projected: scene.projected,
+                                 tolerances: scene.tolerances)
+    let runs = await computeRunsParallel(scene: scene, tester: tester)
+    return finishFullDrawing(runsPerSegment: runs, scene: scene)
 }
 
 /// Internal pipeline mode. `.xray` skips occlusion and emits every candidate
@@ -21,34 +40,18 @@ enum PipelineMode: Sendable {
     case full
 }
 
+/// Synchronous (serial) pipeline — also the reference for invariant 6.
 func runPipeline(mesh: Mesh,
                  view: OrthographicView,
                  options: DrawingOptions,
                  mode: PipelineMode) -> LineDrawing {
-    // Stage 4.3a — project every vertex to (screenX, screenY, depth) and
-    // measure the projected extent; sampling tolerances derive from it.
-    let projected = projectPositions(mesh.positions, view: view)
-    let projectedDiagonal = projectedBoundsDiagonal(projected)
-    guard projectedDiagonal > 0, mesh.boundingDiagonal > 0 else {
-        // Empty mesh, or the whole model projects to a single point.
+    guard let scene = prepareScene(mesh: mesh, view: view, options: options) else {
         return LineDrawing(canonicalizing: [])
     }
-    let tolerances = Tolerances(options: options,
-                                modelDiagonal: mesh.boundingDiagonal,
-                                projectedDiagonal: projectedDiagonal)
-
-    // Stage 4.2 — per-view candidate edge classification.
-    let candidates = classifyCandidateEdges(mesh: mesh, view: view, tolerances: tolerances)
-
-    // Stage 4.3b — candidate edges as 2D segments with interpolable depth,
-    // dropping those too short on screen to be lines.
-    let segments = projectCandidates(candidates, mesh: mesh, projected: projected,
-                                     tolerances: tolerances)
-
     switch mode {
     case .xray:
         // Occlusion skipped: every candidate emitted visible, whole.
-        let paths = segments.map {
+        let paths = scene.segments.map {
             LineDrawing.Path(points: [SIMD2($0.start.x, $0.start.y),
                                       SIMD2($0.end.x, $0.end.y)],
                              kind: .visible)
@@ -56,24 +59,114 @@ func runPipeline(mesh: Mesh,
         return LineDrawing(canonicalizing: paths)
 
     case .full:
-        // Stages 4.4 + 4.5 — visibility sampling against the occluder BVH.
-        let tester = OcclusionTester(mesh: mesh, projected: projected, tolerances: tolerances)
-        var paths: [LineDrawing.Path] = []
-        for segment in segments {
-            let ownFaces = mesh.edges[segment.edgeIndex].faces
-            for run in visibilityRuns(for: segment, ownFaces: ownFaces,
-                                      tester: tester, tolerances: tolerances) {
-                if run.hidden && !options.includeHiddenLines { continue }
-                paths.append(LineDrawing.Path(
-                    points: [segment.point(at: run.tStart), segment.point(at: run.tEnd)],
-                    kind: run.hidden ? .hidden : .visible
-                ))
+        let tester = OcclusionTester(mesh: mesh, projected: scene.projected,
+                                     tolerances: scene.tolerances)
+        let runs = computeRunsSerial(scene: scene, tester: tester)
+        return finishFullDrawing(runsPerSegment: runs, scene: scene)
+    }
+}
+
+// MARK: Scene preparation (stages 4.2 + 4.3)
+
+/// Everything the per-edge visibility stage needs, prepared once per call.
+/// Sendable: shared read-only across the TaskGroup.
+struct PreparedScene: Sendable {
+    var mesh: Mesh
+    var options: DrawingOptions
+    var tolerances: Tolerances
+    var projected: [SIMD3<Double>]
+    var segments: [ProjectedEdge]
+}
+
+/// Runs projection (4.3) and classification (4.2). Returns nil when there is
+/// nothing to draw (empty mesh or a projection collapsed to a single point).
+func prepareScene(mesh: Mesh,
+                  view: OrthographicView,
+                  options: DrawingOptions) -> PreparedScene? {
+    let projected = projectPositions(mesh.positions, view: view)
+    let projectedDiagonal = projectedBoundsDiagonal(projected)
+    guard projectedDiagonal > 0, mesh.boundingDiagonal > 0 else { return nil }
+    let tolerances = Tolerances(options: options,
+                                modelDiagonal: mesh.boundingDiagonal,
+                                projectedDiagonal: projectedDiagonal)
+    let candidates = classifyCandidateEdges(mesh: mesh, view: view, tolerances: tolerances)
+    let segments = projectCandidates(candidates, mesh: mesh, projected: projected,
+                                     tolerances: tolerances)
+    return PreparedScene(mesh: mesh, options: options, tolerances: tolerances,
+                         projected: projected, segments: segments)
+}
+
+// MARK: Per-edge visibility (stages 4.4 + 4.5), serial and parallel
+
+private func computeRunsChunk(_ range: Range<Int>,
+                              scene: PreparedScene,
+                              tester: OcclusionTester) -> [[VisibilityRun]] {
+    var chunk: [[VisibilityRun]] = []
+    chunk.reserveCapacity(range.count)
+    for index in range {
+        let segment = scene.segments[index]
+        chunk.append(visibilityRuns(for: segment,
+                                    ownFaces: scene.mesh.edges[segment.edgeIndex].faces,
+                                    tester: tester,
+                                    tolerances: scene.tolerances))
+    }
+    return chunk
+}
+
+func computeRunsSerial(scene: PreparedScene, tester: OcclusionTester) -> [[VisibilityRun]] {
+    computeRunsChunk(scene.segments.indices, scene: scene, tester: tester)
+}
+
+/// TaskGroup over fixed edge-index chunks. Chunk results carry their offset
+/// and land in a preallocated index-addressed array, so completion order
+/// cannot influence output (constraint C3).
+func computeRunsParallel(scene: PreparedScene,
+                         tester: OcclusionTester) async -> [[VisibilityRun]] {
+    let count = scene.segments.count
+    guard count > 0 else { return [] }
+    // Fixed fan-out; the cooperative pool schedules chunks onto cores.
+    let chunkSize = Swift.max(1, (count + 63) / 64)
+    var results = [[VisibilityRun]?](repeating: nil, count: count)
+    await withTaskGroup(of: (Int, [[VisibilityRun]]).self) { group in
+        var start = 0
+        while start < count {
+            let range = start..<Swift.min(start + chunkSize, count)
+            group.addTask {
+                (range.lowerBound, computeRunsChunk(range, scene: scene, tester: tester))
+            }
+            start = range.upperBound
+        }
+        for await (offset, chunk) in group {
+            for (i, runs) in chunk.enumerated() {
+                results[offset + i] = runs
             }
         }
-        // Stage 4.6 (chaining + coincidence suppression) lands in M4.
-        // Stage 4.7 — canonical ordering & tight bounds.
-        return LineDrawing(canonicalizing: paths)
     }
+    return results.map { $0! }
+}
+
+// MARK: Emit + finish (stages 4.6 + 4.7)
+
+func finishFullDrawing(runsPerSegment: [[VisibilityRun]],
+                       scene: PreparedScene) -> LineDrawing {
+    var paths: [LineDrawing.Path] = []
+    for (index, runs) in runsPerSegment.enumerated() {
+        let segment = scene.segments[index]
+        for run in runs {
+            if run.hidden && !scene.options.includeHiddenLines { continue }
+            paths.append(LineDrawing.Path(
+                points: [segment.point(at: run.tStart), segment.point(at: run.tEnd)],
+                kind: run.hidden ? .hidden : .visible
+            ))
+        }
+    }
+    // Stage 4.6 — collinear chaining, then coincidence suppression.
+    paths = chainCollinearPaths(paths, tolerances: scene.tolerances)
+    if scene.options.suppressHiddenCoincidentWithVisible && scene.options.includeHiddenLines {
+        paths = suppressHiddenCoincidentWithVisible(paths, tolerances: scene.tolerances)
+    }
+    // Stage 4.7 — canonical ordering & tight bounds.
+    return LineDrawing(canonicalizing: paths)
 }
 
 // MARK: Stage 4.2 — per-view edge classification
