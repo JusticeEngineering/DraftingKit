@@ -17,8 +17,17 @@ let package = Package(
         .library(name: "DraftingGraphics", targets: ["DraftingGraphics"]),
     ],
     targets: [
-        // Pure core: Swift standard library ONLY (constraint C1).
-        .target(name: "DraftingCore"),
+        // Pure core: Swift standard library ONLY (constraint C1 — no imports
+        // beyond stdlib; verified by CI grep). On Linux the stdlib's own
+        // math (squareRoot etc.) lowers to libm symbols, so the C math
+        // library must be LINKED there — a toolchain dependency, not an API
+        // one.
+        .target(
+            name: "DraftingCore",
+            linkerSettings: [
+                .linkedLibrary("m", .when(platforms: [.linux]))
+            ]
+        ),
 
         // Apple-only targets (implemented in M5; placeholders until then).
         .target(name: "DraftingModelIO", dependencies: ["DraftingCore"]),
