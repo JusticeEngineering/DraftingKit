@@ -1,11 +1,14 @@
 // WireframeDemo — dead-simple manual test harness for WireframeKit.
 //
-//   swift run WireframeDemo
+//   swift run -c release WireframeDemo                  (GUI)
+//   swift run -c release WireframeDemo bench <file>     (headless timings)
 //
 // Import an STL/OBJ/USDZ, aim the view with presets or azimuth/elevation
 // sliders, and see the hidden-line drawing rendered through the REAL
 // production path: makeLineDrawing → pdfData → NSImage. Not part of the
 // library API; excluded from non-macOS builds.
+//
+// Run with -c release for real meshes: debug builds are 10–30× slower.
 
 #if os(macOS)
 
@@ -17,6 +20,49 @@ import WireframeGraphics
 import WireframeModelIO
 
 @main
+enum Entry {
+    static func main() {
+        let arguments = CommandLine.arguments
+        if arguments.count >= 3, arguments[1] == "bench" {
+            runBenchmark(path: arguments[2])
+        } else {
+            WireframeDemoApp.main()
+        }
+    }
+}
+
+// MARK: - Headless benchmark
+
+private func runBenchmark(path: String) {
+    let clock = ContinuousClock()
+    var diagnostics = MeshDiagnostics()
+    print("importing \(path) …")
+    var imported: Mesh?
+    let importTime = clock.measure {
+        imported = try? MeshImport.mesh(contentsOf: URL(fileURLWithPath: path),
+                                        diagnostics: &diagnostics)
+    }
+    guard let mesh = imported else {
+        print("import FAILED")
+        return
+    }
+    print("import: \(importTime) — \(mesh.triangles.count) triangles, "
+        + "\(mesh.positions.count) vertices, \(diagnostics.boundaryEdgeCount) boundary edges, "
+        + "\(diagnostics.nonManifoldEdgeCount) non-manifold")
+
+    for (name, view) in [("front", OrthographicView.front), ("isometric", .isometric)] {
+        var drawing: LineDrawing?
+        let drawTime = clock.measure {
+            drawing = makeLineDrawing(mesh: mesh, view: view)  // serial path
+        }
+        let visible = drawing?.paths.count { $0.kind == .visible } ?? 0
+        let hidden = (drawing?.paths.count ?? 0) - visible
+        print("\(name): \(drawTime) — \(visible) visible + \(hidden) hidden paths")
+    }
+}
+
+// MARK: - App
+
 struct WireframeDemoApp: App {
     var body: some Scene {
         WindowGroup("WireframeKit Demo") {
@@ -73,6 +119,12 @@ struct ContentView: View {
     @State private var computeInfo = ""
     @State private var exportScale = "72"
     @State private var importerShown = false
+    @State private var importing = false
+    @State private var computing = false
+    /// Stale-result guard: bumped whenever a compute task starts; results
+    /// from an older generation are discarded (makeLineDrawing itself is not
+    /// cancellable mid-flight).
+    @State private var computeGeneration = 0
 
     private let modelTypes: [UTType] = [
         UTType(filenameExtension: "stl"),
@@ -87,7 +139,13 @@ struct ContentView: View {
             canvas
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
-        .task(id: parameters) { await recompute() }
+        .task(id: parameters) {
+            // Debounce slider drags; cancellation during the sleep means a
+            // newer parameter change superseded this one.
+            guard mesh != nil else { return }
+            do { try await Task.sleep(for: .milliseconds(250)) } catch { return }
+            await recompute()
+        }
     }
 
     // MARK: Sidebar
@@ -98,8 +156,17 @@ struct ContentView: View {
                 Button("Open Model… (STL / OBJ / USDZ)") { importerShown = true }
                     .fileImporter(isPresented: $importerShown,
                                   allowedContentTypes: modelTypes) { result in
-                        if case .success(let url) = result { load(url) }
+                        if case .success(let url) = result {
+                            Task { await load(url) }
+                        }
                     }
+                    .disabled(importing)
+                if importing {
+                    HStack(spacing: 6) {
+                        ProgressView().controlSize(.small)
+                        Text("Importing…").font(.caption).foregroundStyle(.secondary)
+                    }
+                }
                 if !meshInfo.isEmpty {
                     Text(meshInfo).font(.caption).foregroundStyle(.secondary)
                 }
@@ -191,27 +258,35 @@ struct ContentView: View {
                     .resizable()
                     .aspectRatio(contentMode: .fit)
                     .padding(16)
-            } else {
+            } else if !computing {
                 Text(mesh == nil
                      ? "Open an STL, OBJ or USDZ file to begin."
                      : "Nothing to draw for this view.")
                     .foregroundStyle(.gray)
+            }
+            if computing {
+                VStack(spacing: 8) {
+                    ProgressView()
+                    Text("Computing drawing…").font(.caption).foregroundStyle(.gray)
+                }
+                .padding(20)
+                .background(.white.opacity(0.85), in: RoundedRectangle(cornerRadius: 8))
             }
         }
     }
 
     // MARK: Actions
 
-    private func load(_ url: URL) {
-        let accessing = url.startAccessingSecurityScopedResource()
-        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+    /// Import runs off the main actor; the UI shows progress meanwhile.
+    private func load(_ url: URL) async {
+        importing = true
         errorMessage = ""
-        var diagnostics = MeshDiagnostics()
+        defer { importing = false }
         do {
-            let loaded = try MeshImport.mesh(contentsOf: url, diagnostics: &diagnostics)
+            let (loaded, diagnostics, elapsed) = try await Self.importMesh(url)
             mesh = loaded
             meshInfo = "\(url.lastPathComponent) — \(loaded.triangles.count) triangles, "
-                + "\(loaded.positions.count) vertices"
+                + "\(loaded.positions.count) vertices (\(Self.seconds(elapsed)))"
             diagnosticsInfo = "dropped \(diagnostics.degenerateTrianglesDropped) degenerate, "
                 + "\(diagnostics.boundaryEdgeCount) boundary edges, "
                 + "\(diagnostics.nonManifoldEdgeCount) non-manifold edges"
@@ -221,25 +296,64 @@ struct ContentView: View {
         }
     }
 
+    /// nonisolated async ⇒ runs on the cooperative pool, not the main actor.
+    private nonisolated static func importMesh(_ url: URL) async throws
+        -> (Mesh, MeshDiagnostics, Duration)
+    {
+        let accessing = url.startAccessingSecurityScopedResource()
+        defer { if accessing { url.stopAccessingSecurityScopedResource() } }
+        var diagnostics = MeshDiagnostics()
+        let clock = ContinuousClock()
+        let start = clock.now
+        let mesh = try MeshImport.mesh(contentsOf: url, diagnostics: &diagnostics)
+        return (mesh, diagnostics, clock.now - start)
+    }
+
     private func recompute() async {
         guard let mesh else {
             drawing = nil
             image = nil
             return
         }
+        computeGeneration += 1
+        let generation = computeGeneration
+        computing = true
+
         let clock = ContinuousClock()
         let start = clock.now
         let result = await makeLineDrawing(mesh: mesh, view: parameters.view,
                                            options: parameters.options)
         let elapsed = clock.now - start
 
+        // A newer compute superseded this one while it was in flight.
+        guard generation == computeGeneration else { return }
+        computing = false
         drawing = result
-        // Display through the production contract: vector PDF → NSImage.
-        let pdf = result.pdfData(style: PDFStyle(pointsPerModelUnit: 72))
-        image = result.paths.isEmpty ? nil : NSImage(data: pdf)
+        image = Self.displayImage(for: result)
         let visible = result.paths.count { $0.kind == .visible }
         let hidden = result.paths.count - visible
-        computeInfo = "\(visible) visible + \(hidden) hidden paths in \(elapsed)"
+        computeInfo = "\(visible) visible + \(hidden) hidden paths in \(Self.seconds(elapsed))"
+    }
+
+    /// Display rendering normalizes the page to ~2048pt on the long side so
+    /// stroke widths stay visible for models of any physical size. (Export
+    /// uses the user's scale — this is display only.)
+    private nonisolated static func displayImage(for drawing: LineDrawing) -> NSImage? {
+        guard !drawing.paths.isEmpty else { return nil }
+        let maxDimension = Swift.max(drawing.bounds.size.x, drawing.bounds.size.y)
+        guard maxDimension > 0 else { return nil }
+        var style = PDFStyle(pointsPerModelUnit: 2048 / maxDimension)
+        style.visibleLineWidth = 1.6
+        style.hiddenLineWidth = 1.0
+        style.hiddenDashPattern = [6, 4]
+        style.margin = 24
+        return NSImage(data: drawing.pdfData(style: style))
+    }
+
+    private static func seconds(_ duration: Duration) -> String {
+        let s = Double(duration.components.seconds)
+            + Double(duration.components.attoseconds) / 1e18
+        return String(format: "%.2fs", s)
     }
 
     private func savePDF() {
@@ -252,9 +366,7 @@ struct ContentView: View {
 
     private func saveSVG() {
         guard let drawing else { return }
-        save(data: Data(drawing.svg().utf8),
-             type: UTType.svg,
-             name: "wireframe.svg")
+        save(data: Data(drawing.svg().utf8), type: .svg, name: "wireframe.svg")
     }
 
     private func save(data: Data, type: UTType, name: String) {
