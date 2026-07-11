@@ -65,5 +65,11 @@ binary = binary_cube()
 # Not ASCII ("solid" absent), and bytes 80..84 decode to a huge triangle count.
 (OUT / "garbage.stl").write_bytes(bytes((i * 37 + 11) % 251 for i in range(200)))
 
-for f in sorted(OUT.iterdir()):
+# WireframeModelIOTests exercises the .stl → core-parser routing with the
+# same binary cube.
+MODELIO_OUT = OUT.parent.parent / "WireframeModelIOTests" / "Resources"
+MODELIO_OUT.mkdir(parents=True, exist_ok=True)
+(MODELIO_OUT / "cube-binary.stl").write_bytes(binary)
+
+for f in sorted([*OUT.iterdir(), *MODELIO_OUT.glob("*.stl")]):
     print(f"{f.name}: {f.stat().st_size} bytes")

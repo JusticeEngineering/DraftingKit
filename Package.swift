@@ -32,5 +32,16 @@ let package = Package(
                 .copy("Goldens"),
             ]
         ),
+        .testTarget(
+            name: "WireframeModelIOTests",
+            dependencies: ["WireframeModelIO", "WireframeCore"],
+            resources: [
+                .copy("Resources")
+            ]
+        ),
+        .testTarget(
+            name: "WireframeGraphicsTests",
+            dependencies: ["WireframeGraphics", "WireframeCore"]
+        ),
     ]
 )
