@@ -21,8 +21,15 @@ public struct DrawingOptions: Sendable {
 struct Tolerances: Sendable {
     /// Visibility sample spacing `s`, in projected model units.
     var sampleSpacing: Double
-    /// Candidates with projected length below this are dots, not lines (4.2).
+    /// Candidates with projected length below this are *candidates for
+    /// dropping* (4.2) — but only when also foreshortened (see
+    /// `foreshorteningRatio`), so fine tessellation survives.
     var minProjectedEdgeLength: Double
+    /// A short candidate is dropped only if its projected length is below
+    /// this fraction of its 3D length — i.e. it is genuinely edge-on to the
+    /// view (contributing dots, not lines). Small-but-real edges project at
+    /// ratio ≈ 1 and are kept.
+    var foreshorteningRatio: Double
     /// Occlusion depth epsilon ε (4.5).
     var depthEpsilon: Double
     /// Visibility transition bisection stops below this interval (4.4).
@@ -44,6 +51,7 @@ struct Tolerances: Sendable {
         let s = options.sampleSpacingFraction * projectedDiagonal
         sampleSpacing = s
         minProjectedEdgeLength = 2 * s
+        foreshorteningRatio = 0.25
         depthEpsilon = options.epsilonFraction * modelDiagonal
         bisectionTolerance = s / 256
         chainEndpointTolerance = s / 16

@@ -114,6 +114,40 @@ struct ClassificationTests {
         }
     }
 
+    @Test func shortRealEdgesSurviveOnlyForeshortenedOnesDrop() {
+        // Three separated triangles: one big (sets the projected diagonal),
+        // one tiny (fine tessellation — short on screen AND in 3D), one
+        // extremely thin sliver stretched along the view axis (short on
+        // screen, long in 3D — genuinely foreshortened).
+        var diag = MeshDiagnostics()
+        let mesh = Mesh(
+            weldingSoup: [
+                (SIMD3(0, 0, 0), SIMD3(10, 0, 0), SIMD3(0, 0, 10)),
+                (SIMD3(0, 0, 20), SIMD3(0.01, 0, 20), SIMD3(0, 0, 20.01)),
+                (SIMD3(5, 0, 5), SIMD3(5, 3, 5), SIMD3(5.0001, 1.5, 5)),
+            ],
+            tolerance: 1e-9,
+            diagnostics: &diag
+        )
+        let options = DrawingOptions()
+        let projected = projectPositions(mesh.positions, view: .front)
+        let tolerances = Tolerances(options: options,
+                                    modelDiagonal: mesh.boundingDiagonal,
+                                    projectedDiagonal: projectedBoundsDiagonal(projected))
+        let candidates = classifyCandidateEdges(mesh: mesh, view: .front, tolerances: tolerances)
+        #expect(candidates.count == 9, "all boundary edges are candidates")
+        let segments = projectCandidates(candidates, mesh: mesh,
+                                         projected: projected, tolerances: tolerances)
+        // Big triangle: 3 kept. Tiny triangle: 3 kept (ratio ≈ 1 despite
+        // being far below the projected-length threshold). Sliver: 3 dropped.
+        #expect(segments.count == 6)
+        for segment in segments {
+            let edge = mesh.edges[segment.edgeIndex]
+            #expect(abs(mesh.positions[edge.a].y) < 1,
+                    "no foreshortened sliver edge may survive")
+        }
+    }
+
     @Test func projectedLengthFilterDropsViewAxisEdges() {
         // Cube front view: the 4 depth edges (along +Y) project to points.
         let cube = Fixtures.cube()

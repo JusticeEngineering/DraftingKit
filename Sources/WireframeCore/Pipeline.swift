@@ -249,9 +249,11 @@ func projectedBoundsDiagonal(_ projected: [SIMD3<Double>]) -> Double {
     return (size.x * size.x + size.y * size.y).squareRoot()
 }
 
-/// Projects candidate edges to 2D segments, dropping those whose projected
-/// length is below `tolerances.minProjectedEdgeLength` (edges nearly parallel
-/// to the view axis contribute dots, not lines).
+/// Projects candidate edges to 2D segments, dropping foreshortened ones:
+/// short on screen AND much shorter than their 3D length (nearly parallel to
+/// the view axis — dots, not lines). Edges that are short simply because the
+/// tessellation is fine project at ratio ≈ 1 and are kept, so finely
+/// tessellated models keep their outlines.
 func projectCandidates(_ candidates: [(edgeIndex: Int, reason: EdgeReason)],
                        mesh: Mesh,
                        projected: [SIMD3<Double>],
@@ -263,7 +265,11 @@ func projectCandidates(_ candidates: [(edgeIndex: Int, reason: EdgeReason)],
         let start = projected[edge.a]
         let end = projected[edge.b]
         let dx = end.x - start.x, dy = end.y - start.y
-        if (dx * dx + dy * dy).squareRoot() < tolerances.minProjectedEdgeLength { continue }
+        let projectedLength = (dx * dx + dy * dy).squareRoot()
+        if projectedLength < tolerances.minProjectedEdgeLength {
+            let length3D = length(mesh.positions[edge.b] - mesh.positions[edge.a])
+            if projectedLength < tolerances.foreshorteningRatio * length3D { continue }
+        }
         out.append(ProjectedEdge(edgeIndex: candidate.edgeIndex, start: start, end: end))
     }
     return out

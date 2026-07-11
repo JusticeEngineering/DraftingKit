@@ -85,6 +85,10 @@ struct DrawingParameters: Equatable {
     var includeHiddenLines = true
     var suppressCoincident = true
     var creaseAngleDegrees: Double = 30
+    /// sampleSpacingFraction = 1 / sampleDensity.
+    var sampleDensity: Double = 512
+    /// epsilonFraction = 10^epsilonExponent.
+    var epsilonExponent: Double = -6
 
     /// Viewer orbits a Z-up model: azimuth around Z (0° = +X side),
     /// elevation up from the horizon. forward points INTO the scene.
@@ -104,6 +108,8 @@ struct DrawingParameters: Equatable {
         options.includeHiddenLines = includeHiddenLines
         options.suppressHiddenCoincidentWithVisible = suppressCoincident
         options.creaseAngleDegrees = creaseAngleDegrees
+        options.sampleSpacingFraction = 1 / sampleDensity
+        options.epsilonFraction = pow(10, epsilonExponent)
         return options
     }
 }
@@ -203,6 +209,20 @@ struct ContentView: View {
                 Toggle("Suppress coincident hidden", isOn: $parameters.suppressCoincident)
                     .disabled(!parameters.includeHiddenLines)
                 slider("Crease angle", $parameters.creaseAngleDegrees, 0...120)
+                Picker("Sampling (diag ÷ n)", selection: $parameters.sampleDensity) {
+                    Text("256").tag(256.0)
+                    Text("512").tag(512.0)
+                    Text("1024").tag(1024.0)
+                    Text("2048").tag(2048.0)
+                }
+                .pickerStyle(.segmented)
+                Picker("Depth ε (× diag)", selection: $parameters.epsilonExponent) {
+                    Text("1e-6").tag(-6.0)
+                    Text("1e-5").tag(-5.0)
+                    Text("1e-4").tag(-4.0)
+                    Text("1e-3").tag(-3.0)
+                }
+                .pickerStyle(.segmented)
             }
 
             Section("Drawing") {
