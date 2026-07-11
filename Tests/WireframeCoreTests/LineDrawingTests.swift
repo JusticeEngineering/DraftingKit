@@ -200,6 +200,22 @@ struct SVGTests {
         #expect(svg.contains("stroke-dasharray=\"5.0 2.5\""))
     }
 
+    @Test func hiddenLinesAreThinnerAndGrayByDefault() {
+        let drawing = LineDrawing(canonicalizing: [
+            LineDrawing.Path(points: [SIMD2(0, 0), SIMD2(1, 0)], kind: .visible),
+            LineDrawing.Path(points: [SIMD2(0, 1), SIMD2(1, 1)], kind: .hidden),
+        ])
+        let svg = drawing.svg(strokeWidth: 2.0)
+        #expect(svg.contains("stroke=\"black\" stroke-width=\"2.0\""))
+        #expect(svg.contains("stroke=\"#808080\" stroke-width=\"1.25\""),
+                "hidden defaults to 62.5% width, gray")
+
+        let custom = drawing.svg(strokeWidth: 2.0, hiddenStrokeWidth: 0.4,
+                                 visibleColor: "#000080", hiddenColor: "red")
+        #expect(custom.contains("stroke=\"#000080\" stroke-width=\"2.0\""))
+        #expect(custom.contains("stroke=\"red\" stroke-width=\"0.4\""))
+    }
+
     @Test func emptyDrawingStillValidSVG() {
         let svg = LineDrawing(canonicalizing: []).svg()
         #expect(svg.contains("viewBox=\"0 0 4.0 4.0\""))

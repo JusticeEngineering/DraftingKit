@@ -16,7 +16,7 @@
     <polyline points="3.414213562373095,4.449489742783179 4.121320343559643,4.041241452319316"/>
     <polyline points="4.121320343559643,4.449489742783179 4.121320343559643,4.041241452319316"/>
   </g>
-  <g class="hidden" fill="none" stroke="black" stroke-width="1.0" stroke-dasharray="4.0 3.0">
+  <g class="hidden" fill="none" stroke="#808080" stroke-width="0.625" stroke-dasharray="4.0 3.0">
     <polyline points="2.7071067811865475,3.632993161855452 2.7071067811865475,2.0"/>
     <polyline points="2.7071067811865475,3.632993161855452 4.121320343559643,4.449489742783179"/>
   </g>

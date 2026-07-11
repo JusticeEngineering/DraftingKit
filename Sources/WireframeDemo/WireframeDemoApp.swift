@@ -603,8 +603,19 @@ struct ContentView: View {
 
     private func saveSVG() {
         guard let drawing else { return }
-        let strokeWidth = lineWidth
-        save(type: .svg, name: "wireframe.svg") { Data(drawing.svg(strokeWidth: strokeWidth).utf8) }
+        // SVG lengths are in model units (like its viewBox); scale widths
+        // and dashes to the drawing size so browsers show the same weight
+        // as the canvas (1 "display point" ≈ maxDimension / 1000).
+        let maxDimension = Swift.max(drawing.bounds.size.x, drawing.bounds.size.y)
+        let unit = maxDimension > 0 ? maxDimension / 1000 : 1
+        let strokeWidth = lineWidth * unit
+        let dashes = [6 * unit, 4 * unit]
+        let margin = 12 * unit
+        save(type: .svg, name: "wireframe.svg") {
+            Data(drawing.svg(strokeWidth: strokeWidth,
+                             hiddenDashPattern: dashes,
+                             margin: margin).utf8)
+        }
     }
 
     /// Panel on main; encoding + writing off main (a scan-scale drawing takes
