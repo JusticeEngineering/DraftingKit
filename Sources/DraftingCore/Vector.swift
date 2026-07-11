@@ -45,6 +45,33 @@ func isFinite(_ v: SIMD3<Double>) -> Bool {
     v.x.isFinite && v.y.isFinite && v.z.isFinite
 }
 
+// MARK: Rounding without libm
+
+// Swift's FloatingPoint.rounded(_:) lowers to libm symbols (floor/ceil/...)
+// on Linux, which DraftingCore deliberately doesn't link (constraint C1).
+// These use only division and integer conversion (hardware instructions).
+
+/// floor(value / cellSize) as a grid index, clamped to Int64, 0 for NaN.
+@inline(__always)
+func gridCell(_ value: Double, _ cellSize: Double) -> Int64 {
+    let q = value / cellSize
+    guard q.isFinite else { return 0 }
+    if q >= 9.2e18 { return Int64.max }
+    if q <= -9.2e18 { return Int64.min }
+    var cell = Int64(q)                             // truncates toward zero
+    if q < 0 && Double(cell) != q { cell -= 1 }     // -> floor
+    return cell
+}
+
+/// ceil(value) as Int for non-negative finite input; 0 otherwise.
+@inline(__always)
+func ceilToInt(_ value: Double) -> Int {
+    guard value.isFinite, value > 0 else { return 0 }
+    if value >= 9.2e18 { return Int.max }
+    let truncated = Int(value)
+    return Double(truncated) == value ? truncated : truncated + 1
+}
+
 // MARK: 2D variants (projection stages, M2+)
 
 @inline(__always)

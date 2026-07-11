@@ -142,14 +142,7 @@ private struct EndpointGrid {
     func makeIndex() -> [Cell: [Value]] { [:] }
 
     private func cell(for p: SIMD2<Double>) -> Cell {
-        Cell(x: quantize(p.x), y: quantize(p.y))
-    }
-
-    private func quantize(_ value: Double) -> Int64 {
-        let q = (value / cellSize).rounded(.down)
-        if q >= 9.2e18 { return Int64.max }
-        if q <= -9.2e18 { return Int64.min }
-        return Int64(q)
+        Cell(x: gridCell(p.x, cellSize), y: gridCell(p.y, cellSize))
     }
 
     func insert(point: SIMD2<Double>, value: Value, into index: inout [Cell: [Value]]) {

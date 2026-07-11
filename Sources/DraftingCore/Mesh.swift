@@ -226,17 +226,10 @@ private struct VertexWelder {
     }
 
     private func cell(for p: SIMD3<Double>) -> Cell {
-        Cell(x: quantize(p.x), y: quantize(p.y), z: quantize(p.z))
-    }
-
-    private func quantize(_ x: Double) -> Int64 {
-        let q = (x / tolerance).rounded(.down)
-        // Clamp so a tiny tolerance on large coordinates can't overflow Int64.
-        // Clamped cells stop merging across the clamp boundary — graceful
-        // degradation, not a crash.
-        if q >= 9.2e18 { return Int64.max }
-        if q <= -9.2e18 { return Int64.min }
-        return Int64(q)
+        // gridCell clamps, so a tiny tolerance on large coordinates can't
+        // overflow Int64. Clamped cells stop merging across the clamp
+        // boundary — graceful degradation, not a crash.
+        Cell(x: gridCell(p.x, tolerance), y: gridCell(p.y, tolerance), z: gridCell(p.z, tolerance))
     }
 
     mutating func index(for p: SIMD3<Double>, positions: inout [SIMD3<Double>]) -> Int {

@@ -29,7 +29,7 @@ func visibilityRuns(for segment: ProjectedEdge,
     }
 
     // Sub-interval midpoints at spacing ≤ sampleSpacing, minimum 2 samples.
-    let intervals = Swift.max(2, Int((projectedLength / tolerances.sampleSpacing).rounded(.up)))
+    let intervals = Swift.max(2, ceilToInt(projectedLength / tolerances.sampleSpacing))
     var states = [Bool]()
     states.reserveCapacity(intervals)
     for i in 0..<intervals {
