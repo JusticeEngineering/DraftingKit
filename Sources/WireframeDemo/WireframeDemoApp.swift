@@ -343,31 +343,66 @@ struct ContentView: View {
         let start = clock.now
         let result = await makeLineDrawing(mesh: mesh, view: parameters.view,
                                            options: parameters.options)
-        let elapsed = clock.now - start
-
+        let computeElapsed = clock.now - start
         // A newer compute superseded this one while it was in flight.
         guard generation == computeGeneration else { return }
-        computing = false
         drawing = result
-        image = Self.displayImage(for: result)
+
+        // Rasterize off the main actor — at scan scale a drawing can hold
+        // hundreds of thousands of paths, and stroking those on main is a
+        // beachball. The main thread only wraps the finished bitmap.
+        let rendered = await Self.renderBitmap(for: result)
+        guard generation == computeGeneration else { return }
+        computing = false
+        image = rendered.map { NSImage(cgImage: $0, size: .zero) }
         let visible = result.paths.count { $0.kind == .visible }
         let hidden = result.paths.count - visible
-        computeInfo = "\(visible) visible + \(hidden) hidden paths in \(Self.seconds(elapsed))"
+        computeInfo = "\(visible) visible + \(hidden) hidden paths in \(Self.seconds(computeElapsed)) "
+            + "(+ \(Self.seconds(clock.now - start - computeElapsed)) render)"
     }
 
-    /// Display rendering normalizes the page to ~2048pt on the long side so
-    /// stroke widths stay visible for models of any physical size. (Export
-    /// uses the user's scale — this is display only.)
-    private nonisolated static func displayImage(for drawing: LineDrawing) -> NSImage? {
+    /// Renders the drawing into a bitmap sized ~2200px on the long side,
+    /// off the main actor (nonisolated async ⇒ cooperative pool). Display
+    /// only — export still goes through the vector PDF/SVG paths.
+    private nonisolated static func renderBitmap(for drawing: LineDrawing) async -> CGImage? {
         guard !drawing.paths.isEmpty else { return nil }
         let maxDimension = Swift.max(drawing.bounds.size.x, drawing.bounds.size.y)
         guard maxDimension > 0 else { return nil }
-        var style = PDFStyle(pointsPerModelUnit: 2048 / maxDimension)
-        style.visibleLineWidth = 1.6
-        style.hiddenLineWidth = 1.0
-        style.hiddenDashPattern = [6, 4]
-        style.margin = 24
-        return NSImage(data: drawing.pdfData(style: style))
+        let scale = 2200 / maxDimension
+        let margin = 24.0
+        let width = Int((drawing.bounds.size.x * scale + 2 * margin).rounded(.up))
+        let height = Int((drawing.bounds.size.y * scale + 2 * margin).rounded(.up))
+        guard let context = CGContext(
+            data: nil, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: 0,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+
+        context.setFillColor(CGColor(gray: 1, alpha: 1))
+        context.fill(CGRect(x: 0, y: 0, width: CGFloat(width), height: CGFloat(height)))
+        context.translateBy(x: CGFloat(margin), y: CGFloat(margin))
+        context.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+        context.translateBy(x: CGFloat(-drawing.bounds.min.x), y: CGFloat(-drawing.bounds.min.y))
+        context.setStrokeColor(CGColor(gray: 0, alpha: 1))
+        context.setLineCap(.round)
+        context.setLineJoin(.round)
+
+        let hidden = drawing.cgPath(for: .hidden)
+        if !hidden.isEmpty {
+            context.setLineWidth(CGFloat(1.0 / scale))
+            context.setLineDash(phase: 0, lengths: [CGFloat(6 / scale), CGFloat(4 / scale)])
+            context.addPath(hidden)
+            context.strokePath()
+        }
+        let visible = drawing.cgPath(for: .visible)
+        if !visible.isEmpty {
+            context.setLineWidth(CGFloat(1.6 / scale))
+            context.setLineDash(phase: 0, lengths: [])
+            context.addPath(visible)
+            context.strokePath()
+        }
+        return context.makeImage()
     }
 
     private static func seconds(_ duration: Duration) -> String {
@@ -379,26 +414,39 @@ struct ContentView: View {
     private func savePDF() {
         guard let drawing else { return }
         let scale = Double(exportScale) ?? 72
-        var style = PDFStyle(pointsPerModelUnit: scale)
-        style.margin = 18
-        save(data: drawing.pdfData(style: style), type: .pdf, name: "wireframe.pdf")
+        var mutableStyle = PDFStyle(pointsPerModelUnit: scale)
+        mutableStyle.margin = 18
+        let style = mutableStyle
+        save(type: .pdf, name: "wireframe.pdf") { drawing.pdfData(style: style) }
     }
 
     private func saveSVG() {
         guard let drawing else { return }
-        save(data: Data(drawing.svg().utf8), type: .svg, name: "wireframe.svg")
+        save(type: .svg, name: "wireframe.svg") { Data(drawing.svg().utf8) }
     }
 
-    private func save(data: Data, type: UTType, name: String) {
+    /// Panel on main; encoding + writing off main (a scan-scale drawing takes
+    /// seconds to serialize).
+    private func save(type: UTType, name: String,
+                      encode: @escaping @Sendable () -> Data) {
         let panel = NSSavePanel()
         panel.allowedContentTypes = [type]
         panel.nameFieldStringValue = name
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            try data.write(to: url)
-        } catch {
-            errorMessage = "Save failed: \(error.localizedDescription)"
+        errorMessage = ""
+        Task {
+            let data = await Self.encoded(encode)
+            do {
+                try data.write(to: url)
+            } catch {
+                errorMessage = "Save failed: \(error.localizedDescription)"
+            }
         }
+    }
+
+    /// Runs the (potentially seconds-long) serialization off the main actor.
+    private nonisolated static func encoded(_ encode: @Sendable () -> Data) async -> Data {
+        encode()
     }
 }
 
