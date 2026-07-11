@@ -24,6 +24,13 @@ let package = Package(
         .target(name: "WireframeModelIO", dependencies: ["WireframeCore"]),
         .target(name: "WireframeGraphics", dependencies: ["WireframeCore"]),
 
+        // Manual test harness (macOS GUI; stub main elsewhere):
+        //   swift run WireframeDemo
+        .executableTarget(
+            name: "WireframeDemo",
+            dependencies: ["WireframeCore", "WireframeModelIO", "WireframeGraphics"]
+        ),
+
         .testTarget(
             name: "WireframeCoreTests",
             dependencies: ["WireframeCore"],
