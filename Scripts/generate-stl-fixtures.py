@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generates the checked-in STL parser fixtures in Tests/WireframeCoreTests/Resources/.
+"""Generates the checked-in STL parser fixtures in Tests/DraftingCoreTests/Resources/.
 
 Deterministic output — rerunning must produce byte-identical files.
 Geometry matches Fixtures.cube() (unit cube, corner at origin, outward winding).
@@ -8,7 +8,7 @@ Geometry matches Fixtures.cube() (unit cube, corner at origin, outward winding).
 import struct
 from pathlib import Path
 
-OUT = Path(__file__).resolve().parent.parent / "Tests" / "WireframeCoreTests" / "Resources"
+OUT = Path(__file__).resolve().parent.parent / "Tests" / "DraftingCoreTests" / "Resources"
 OUT.mkdir(parents=True, exist_ok=True)
 
 CORNERS = [
@@ -34,7 +34,7 @@ def normal(a, b, c):
 
 
 def binary_cube() -> bytes:
-    header = b"WireframeKit binary cube fixture".ljust(80, b"\0")
+    header = b"DraftingKit binary cube fixture".ljust(80, b"\0")
     body = [header, struct.pack("<I", len(TRIANGLES))]
     for tri in TRIANGLES:
         a, b, c = (CORNERS[i] for i in tri)
@@ -65,9 +65,9 @@ binary = binary_cube()
 # Not ASCII ("solid" absent), and bytes 80..84 decode to a huge triangle count.
 (OUT / "garbage.stl").write_bytes(bytes((i * 37 + 11) % 251 for i in range(200)))
 
-# WireframeModelIOTests exercises the .stl → core-parser routing with the
+# DraftingModelIOTests exercises the .stl → core-parser routing with the
 # same binary cube.
-MODELIO_OUT = OUT.parent.parent / "WireframeModelIOTests" / "Resources"
+MODELIO_OUT = OUT.parent.parent / "DraftingModelIOTests" / "Resources"
 MODELIO_OUT.mkdir(parents=True, exist_ok=True)
 (MODELIO_OUT / "cube-binary.stl").write_bytes(binary)
 

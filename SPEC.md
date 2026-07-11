@@ -1,6 +1,6 @@
-# WireframeKit — Build Specification
+# DraftingKit — Build Specification
 
-You are building **WireframeKit**, a Swift library that converts 3D triangle meshes (STL/OBJ/USDZ) into 2D hidden-line-removed vector line drawings. It will be consumed by the host macOS app (a plan-sheet / drawing document tool, Swift/SwiftUI + AppKit) which places the resulting drawing as a scale-accurate image element on a document sheet. The library may be open-sourced later, which drives several hard constraints below (purity, no external deps, clean-room implementation, MIT license from day one).
+You are building **DraftingKit**, a Swift library that converts 3D triangle meshes (STL/OBJ/USDZ) into 2D hidden-line-removed vector line drawings. It will be consumed by the host macOS app (a plan-sheet / drawing document tool, Swift/SwiftUI + AppKit) which places the resulting drawing as a scale-accurate image element on a document sheet. The library may be open-sourced later, which drives several hard constraints below (purity, no external deps, clean-room implementation, MIT license from day one).
 
 Work **milestone by milestone** (§9). Each milestone ends with `swift test` green, a short summary of what was built, and any proposed deviations from this spec — propose deviations explicitly, never deviate silently. Stop after each milestone for review.
 
@@ -16,7 +16,7 @@ Work **milestone by milestone** (§9). Each milestone ends with `swift test` gre
 1. User imports an STL/OBJ; app asks the user what one model unit means (mm, inch — STL is unitless; the library stays unit-agnostic and never interprets units).
 2. User picks a view (front/top/right/iso/custom) and options.
 3. App calls `makeLineDrawing(mesh:view:options:)` → `LineDrawing`.
-4. App calls `lineDrawing.pdfData(style:)` (WireframeGraphics target) → PDF `Data`, hands it to `NSImage(data:)`, and places it as a regular image element. PDF-backed `NSImage` draws vector-sharp at any zoom.
+4. App calls `lineDrawing.pdfData(style:)` (DraftingGraphics target) → PDF `Data`, hands it to `NSImage(data:)`, and places it as a regular image element. PDF-backed `NSImage` draws vector-sharp at any zoom.
 5. Scale-accurate placement: the PDF's media box is `bounds × style.pointsPerModelUnit` (+ margins). The app computes `pointsPerModelUnit` from the user's chosen scale and units. Worked example: model in mm placed at 1:4 → `pointsPerModelUnit = (72 / 25.4) / 4 ≈ 0.7087`.
 
 Therefore: `bounds` must be **exact** over all emitted geometry, the PDF media box math must be trustworthy, and output must be **deterministic** (identical input + options → identical output, byte-for-byte after canonical ordering, regardless of parallelism).
@@ -25,30 +25,30 @@ Therefore: `bounds` must be **exact** over all emitted geometry, the PDF media b
 
 ## 2. Package layout & hard constraints
 
-Local SwiftPM package, referenced by path from the app repo (e.g. `Packages/WireframeKit`).
+Local SwiftPM package, referenced by path from the app repo (e.g. `Packages/DraftingKit`).
 
 ```
-WireframeKit/
+DraftingKit/
 ├── Package.swift                  // swift-tools-version: 6.0
 ├── SPEC.md                        // this file
 ├── LICENSE                        // MIT, © 2026 Justice Engineering
 ├── README.md                      // written in M6
 ├── Sources/
-│   ├── WireframeCore/             // Swift stdlib ONLY — see constraints
-│   ├── WireframeModelIO/          // Apple-only: ModelIO ingest (.obj/.usdz/.stl)
-│   └── WireframeGraphics/         // Apple-only: CoreGraphics → CGPath, PDF Data
+│   ├── DraftingCore/             // Swift stdlib ONLY — see constraints
+│   ├── DraftingModelIO/          // Apple-only: ModelIO ingest (.obj/.usdz/.stl)
+│   └── DraftingGraphics/         // Apple-only: CoreGraphics → CGPath, PDF Data
 └── Tests/
-    ├── WireframeCoreTests/        // runs on macOS AND Linux
+    ├── DraftingCoreTests/        // runs on macOS AND Linux
     │   └── Goldens/               // committed JSON + SVG golden files
-    ├── WireframeModelIOTests/     // macOS only; tiny STL/OBJ fixture files
-    └── WireframeGraphicsTests/    // macOS only
+    ├── DraftingModelIOTests/     // macOS only; tiny STL/OBJ fixture files
+    └── DraftingGraphicsTests/    // macOS only
 ```
 
-Apple-only targets declare `.macOS(.v13)` (raise to match the app if it targets newer). `WireframeCore` declares no platform requirements.
+Apple-only targets declare `.macOS(.v13)` (raise to match the app if it targets newer). `DraftingCore` declares no platform requirements.
 
 **Hard constraints — enforce these throughout, re-verify at every milestone:**
 
-- **C1. Core purity.** `Sources/WireframeCore` imports nothing beyond the Swift standard library. No Foundation, no simd module, no Dispatch. Vector math uses stdlib `SIMD2<Double>` / `SIMD3<Double>` (write the ~10 lines of cross/dot/normalize as internal helpers). File I/O is the caller's job — core APIs take `[UInt8]`, never URLs. Verify each milestone: `grep -rn "^import" Sources/WireframeCore` shows nothing (or only `import Swift`).
+- **C1. Core purity.** `Sources/DraftingCore` imports nothing beyond the Swift standard library. No Foundation, no simd module, no Dispatch. Vector math uses stdlib `SIMD2<Double>` / `SIMD3<Double>` (write the ~10 lines of cross/dot/normalize as internal helpers). File I/O is the caller's job — core APIs take `[UInt8]`, never URLs. Verify each milestone: `grep -rn "^import" Sources/DraftingCore` shows nothing (or only `import Swift`).
 - **C2. Concurrency.** All public types are `Sendable` value types. The package builds clean under Swift 6 strict concurrency (language mode 6, no `@unchecked`, no warnings).
 - **C3. Determinism.** Parallel stages write results into preallocated, index-addressed arrays (never unordered appends); output gets a canonical sort (§4.7). No `Set`/`Dictionary` iteration order may leak into output. A dedicated test runs the pipeline serial vs. parallel and asserts identical serialized output.
 - **C4. Zero dependencies.** No SwiftPM dependencies, no vendored code. **Clean-room implementation from this spec only** — do not copy or translate code from any external project. (Context: the sampling design is informed by MIT-licensed prior art, which is fine as *design*; GPL implementations of similar algorithms exist and must not influence code at all.)
@@ -56,7 +56,7 @@ Apple-only targets declare `.macOS(.v13)` (raise to match the app if it targets 
 
 ---
 
-## 3. Public API — WireframeCore
+## 3. Public API — DraftingCore
 
 Indices are `Int`. All coordinates `Double`. Everything below is `public` and `Sendable`.
 
@@ -203,7 +203,7 @@ Seven stages inside `makeLineDrawing`. Keep each stage a separate internal funct
 
 ---
 
-## 5. WireframeModelIO (Apple platforms)
+## 5. DraftingModelIO (Apple platforms)
 
 ```swift
 import ModelIO
@@ -221,7 +221,7 @@ For `.stl` URLs, read the bytes and route through core's `STL.parse` (one parser
 
 ---
 
-## 6. WireframeGraphics (Apple platforms)
+## 6. DraftingGraphics (Apple platforms)
 
 CoreGraphics only — no AppKit (the app owns `NSImage`; `NSImage(data: pdfData)` works directly).
 
@@ -258,7 +258,7 @@ The media-box arithmetic is load-bearing for the app's scale-accurate placement 
 
 Use the **Swift Testing** framework (`import Testing`). Fixtures and goldens are the backbone; write tests alongside or before implementation within each milestone.
 
-**Procedural fixtures** (in `WireframeCoreTests`, code not files — readable and exact):
+**Procedural fixtures** (in `DraftingCoreTests`, code not files — readable and exact):
 
 - `Fixtures.cube()` — unit cube, corner at origin, Z-up.
 - `Fixtures.cylinder(radius:height:radialSegments: 24)` — axis along Z, capped.
@@ -279,7 +279,7 @@ Plus tiny checked-in binary and ASCII STL files (bytes may be generated by a fix
 6. *Determinism:* serial run vs. parallel run vs. repeated parallel run → identical JSON bytes after encoding.
 7. *Bounds tightness:* `bounds` exactly equals the min/max over all emitted points.
 8. *Weld:* cube-as-STL-soup (36 vertices) welds to 8 positions, 12 non-manifold-free interior edges… i.e. 18 edges total, 0 boundary, 0 non-manifold; degenerate-triangle soup drops and counts correctly.
-9. *PDF media box* (`WireframeGraphicsTests`): for a known drawing with bounds 100×50 model units, `pointsPerModelUnit = 0.7087`, margin 10 → media box = (100×0.7087 + 20) × (50×0.7087 + 20) ± 0.001; PDF data is non-empty and begins with `%PDF`.
+9. *PDF media box* (`DraftingGraphicsTests`): for a known drawing with bounds 100×50 model units, `pointsPerModelUnit = 0.7087`, margin 10 → media box = (100×0.7087 + 20) × (50×0.7087 + 20) ± 0.001; PDF data is non-empty and begins with `%PDF`.
 10. *Concurrency:* package compiles in Swift 6 language mode with zero warnings (enforced by build settings, not a test).
 
 **Performance smoke (non-binding, tracked):** 100k-triangle procedural mesh (subdivided fixture), any view, end-to-end < 1 s on Apple Silicon. Print the timing; don't fail on it.
@@ -294,13 +294,13 @@ Perspective projection · section views/cutting planes · arc/circle fitting on 
 
 ## 9. Milestones
 
-Each milestone: implement → `swift test` green → verify C1 (grep core imports) → commit `WireframeKit M<n>: <summary>` → post a short summary + proposed deviations → **stop for review**.
+Each milestone: implement → `swift test` green → verify C1 (grep core imports) → commit `DraftingKit M<n>: <summary>` → post a short summary + proposed deviations → **stop for review**.
 
 - **M1 — Skeleton & mesh.** Package scaffold, LICENSE (MIT © 2026 Justice Engineering), core types (`Mesh`, `MeshDiagnostics`, errors), welding init, adjacency + normals, `STL.parse` (binary + ASCII), procedural fixtures, STL fixture files, weld/adjacency/parser tests (incl. invariant 8).
 - **M2 — Project & classify.** `OrthographicView` (+ named views exactly per §3), `DrawingOptions`, edge classification, projection, and an occlusion-free pipeline that emits *every* candidate edge as visible ("x-ray mode" — internal flag). `LineDrawing`, canonical ordering, `svg()`. First goldens: cube + cylinder + L-bracket in front/top/iso, x-ray mode.
 - **M3 — Occlusion.** Projected-triangle BVH, occlusion test, visibility sampling + bisection, visible/hidden sub-segments. Invariants 1–5 pass (minus suppression). Goldens for all fixtures × {front, top, right, isometric}, real HLR this time.
 - **M4 — Chaining, suppression, determinism, speed.** Collinear chaining, coincidence suppression, TaskGroup parallelism with index-addressed writes + serial path, invariant 6, performance smoke. Re-record goldens (chaining changes path structure — expected; say so in the summary).
-- **M5 — Apple targets.** `WireframeModelIO` (+ macOS tests with tiny .obj fixture; .stl routes through core parser), `WireframeGraphics` (`cgPath`, `pdfData`, invariant 9).
+- **M5 — Apple targets.** `DraftingModelIO` (+ macOS tests with tiny .obj fixture; .stl routes through core parser), `DraftingGraphics` (`cgPath`, `pdfData`, invariant 9).
 - **M6 — OSS polish.** README (what/why, 10-line usage snippet, embedded golden SVGs, non-goals/roadmap), doc comments on all public API, diagnostics surfaced nicely, GitHub Actions workflow file (macOS + Ubuntu matrix: build + test; Ubuntu proves C1 for real), final public-API audit against §3.
 
 ---

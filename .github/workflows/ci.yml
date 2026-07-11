@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  macos:
+    name: macOS (build + test)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Test (debug)
+        run: swift test
+      - name: Build (release)
+        run: swift build -c release
+
+  linux:
+    name: Ubuntu (core purity — build + test without Apple frameworks)
+    runs-on: ubuntu-latest
+    container: swift:6.0-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Swift version
+        run: swift --version
+      - name: Test
+        run: swift test
+      - name: Verify DraftingCore imports nothing
+        run: |
+          if grep -rn "^import" Sources/DraftingCore/; then
+            echo "DraftingCore must not import anything beyond the Swift stdlib" >&2
+            exit 1
+          fi
+          echo "core purity verified"

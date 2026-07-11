@@ -1,54 +1,54 @@
 // swift-tools-version: 6.0
-// WireframeKit — 3D triangle meshes → 2D hidden-line-removed vector drawings.
+// DraftingKit — 3D triangle meshes → 2D hidden-line-removed vector drawings.
 
 import PackageDescription
 
 let package = Package(
-    name: "WireframeKit",
+    name: "DraftingKit",
     // Minimum deployment for Apple platforms. SwiftPM platform requirements are
-    // package-wide; they do not restrict non-Apple platforms, so WireframeCore
+    // package-wide; they do not restrict non-Apple platforms, so DraftingCore
     // still builds unconstrained on Linux (constraint C1).
     platforms: [
         .macOS(.v13)
     ],
     products: [
-        .library(name: "WireframeCore", targets: ["WireframeCore"]),
-        .library(name: "WireframeModelIO", targets: ["WireframeModelIO"]),
-        .library(name: "WireframeGraphics", targets: ["WireframeGraphics"]),
+        .library(name: "DraftingCore", targets: ["DraftingCore"]),
+        .library(name: "DraftingModelIO", targets: ["DraftingModelIO"]),
+        .library(name: "DraftingGraphics", targets: ["DraftingGraphics"]),
     ],
     targets: [
         // Pure core: Swift standard library ONLY (constraint C1).
-        .target(name: "WireframeCore"),
+        .target(name: "DraftingCore"),
 
         // Apple-only targets (implemented in M5; placeholders until then).
-        .target(name: "WireframeModelIO", dependencies: ["WireframeCore"]),
-        .target(name: "WireframeGraphics", dependencies: ["WireframeCore"]),
+        .target(name: "DraftingModelIO", dependencies: ["DraftingCore"]),
+        .target(name: "DraftingGraphics", dependencies: ["DraftingCore"]),
 
         // Manual test harness (macOS GUI; stub main elsewhere):
-        //   swift run WireframeDemo
+        //   swift run DraftingDemo
         .executableTarget(
-            name: "WireframeDemo",
-            dependencies: ["WireframeCore", "WireframeModelIO", "WireframeGraphics"]
+            name: "DraftingDemo",
+            dependencies: ["DraftingCore", "DraftingModelIO", "DraftingGraphics"]
         ),
 
         .testTarget(
-            name: "WireframeCoreTests",
-            dependencies: ["WireframeCore"],
+            name: "DraftingCoreTests",
+            dependencies: ["DraftingCore"],
             resources: [
                 .copy("Resources"),
                 .copy("Goldens"),
             ]
         ),
         .testTarget(
-            name: "WireframeModelIOTests",
-            dependencies: ["WireframeModelIO", "WireframeCore"],
+            name: "DraftingModelIOTests",
+            dependencies: ["DraftingModelIO", "DraftingCore"],
             resources: [
                 .copy("Resources")
             ]
         ),
         .testTarget(
-            name: "WireframeGraphicsTests",
-            dependencies: ["WireframeGraphics", "WireframeCore"]
+            name: "DraftingGraphicsTests",
+            dependencies: ["DraftingGraphics", "DraftingCore"]
         ),
     ]
 )
