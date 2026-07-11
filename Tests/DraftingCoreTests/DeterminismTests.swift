@@ -26,8 +26,13 @@ struct DeterminismTests {
             let serial = runPipeline(mesh: mesh, view: view, options: .init(), mode: .full)
             let parallel1 = await makeLineDrawing(mesh: mesh, view: view)
             let parallel2 = await makeLineDrawing(mesh: mesh, view: view)
-            try #expect(json(serial) == json(parallel1), "\(name): serial vs parallel")
-            try #expect(json(parallel1) == json(parallel2), "\(name): parallel repeatability")
+            // Hoisted: older swift-testing (Linux CI) rejects throwing calls
+            // inside #expect's autoclosure.
+            let serialJSON = try json(serial)
+            let parallelJSON1 = try json(parallel1)
+            let parallelJSON2 = try json(parallel2)
+            #expect(serialJSON == parallelJSON1, "\(name): serial vs parallel")
+            #expect(parallelJSON1 == parallelJSON2, "\(name): parallel repeatability")
             #expect(!serial.paths.isEmpty, "\(name): sanity — drawing must not be empty")
         }
     }
@@ -75,7 +80,9 @@ struct DeterminismTests {
 
         let serial = try #require(serialDrawing)
         #expect(!serial.paths.isEmpty)
-        try #expect(json(serial) == json(parallelDrawing), "determinism at scale")
+        let serialJSON = try json(serial)
+        let parallelJSON = try json(parallelDrawing)
+        #expect(serialJSON == parallelJSON, "determinism at scale")
         // The drawing of a subdivided cube must still be the cube's 12 edges
         // (chained back together from their collinear sub-edges).
         #expect(serial.paths.count == 12)
