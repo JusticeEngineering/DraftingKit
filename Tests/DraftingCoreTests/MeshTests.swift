@@ -8,14 +8,13 @@ struct MeshTests {
     // Invariant 8: cube-as-STL-soup (36 vertices) welds to 8 positions,
     // 18 edges, 0 boundary, 0 non-manifold.
     @Test func weldCubeSoup() {
-        var diag = MeshDiagnostics()
-        let mesh = Mesh(weldingSoup: Fixtures.cubeSoup(), tolerance: 1e-6, diagnostics: &diag)
+        let mesh = Mesh(weldingSoup: Fixtures.cubeSoup(), tolerance: 1e-6)
 
-        #expect(diag.inputTriangleCount == 12)
-        #expect(diag.weldedVertexCount == 8)
-        #expect(diag.degenerateTrianglesDropped == 0)
-        #expect(diag.boundaryEdgeCount == 0)
-        #expect(diag.nonManifoldEdgeCount == 0)
+        #expect(mesh.diagnostics.inputTriangleCount == 12)
+        #expect(mesh.diagnostics.weldedVertexCount == 8)
+        #expect(mesh.diagnostics.degenerateTrianglesDropped == 0)
+        #expect(mesh.diagnostics.boundaryEdgeCount == 0)
+        #expect(mesh.diagnostics.nonManifoldEdgeCount == 0)
 
         #expect(mesh.positions.count == 8)
         #expect(mesh.triangles.count == 12)
@@ -33,11 +32,10 @@ struct MeshTests {
             let d = SIMD3(wobble, -wobble, wobble)
             return (tri.0 + d, tri.1 + d, tri.2 + d)
         }
-        var diag = MeshDiagnostics()
-        let mesh = Mesh(weldingSoup: jittered, tolerance: 1e-6, diagnostics: &diag)
+        let mesh = Mesh(weldingSoup: jittered, tolerance: 1e-6)
         #expect(mesh.positions.count == 8)
         #expect(mesh.edges.count == 18)
-        #expect(diag.degenerateTrianglesDropped == 0)
+        #expect(mesh.diagnostics.degenerateTrianglesDropped == 0)
     }
 
     @Test func weldDoesNotMergeBeyondTolerance() {
@@ -46,14 +44,12 @@ struct MeshTests {
         let c = SIMD3<Double>(0, 1, 0)
         // Second triangle shares an edge only approximately — 10× tolerance off.
         let offset = SIMD3<Double>(0, 0, 1e-5)
-        var diag = MeshDiagnostics()
         let mesh = Mesh(
             weldingSoup: [(a, b, c), (a + offset, SIMD3(0, -1, 0), b + offset)],
-            tolerance: 1e-6,
-            diagnostics: &diag
+            tolerance: 1e-6
         )
         #expect(mesh.positions.count == 6)
-        #expect(diag.boundaryEdgeCount == 6)
+        #expect(mesh.diagnostics.boundaryEdgeCount == 6)
     }
 
     @Test func degenerateTrianglesDropAndCount() {
@@ -64,28 +60,25 @@ struct MeshTests {
         soup.append((SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(2, 0, 0)))   // exactly collinear
         soup.append((SIMD3(0, 0, 0), SIMD3(1e-9, 0, 0), SIMD3(5, 5, 5))) // welds to repeated
         soup.append((SIMD3(0, 0, 0), SIMD3(.nan, 0, 0), SIMD3(0, 5, 5))) // non-finite
+        let mesh = Mesh(weldingSoup: soup, tolerance: 1e-6)
 
-        var diag = MeshDiagnostics()
-        let mesh = Mesh(weldingSoup: soup, tolerance: 1e-6, diagnostics: &diag)
-
-        #expect(diag.inputTriangleCount == 16)
-        #expect(diag.degenerateTrianglesDropped == 4)
+        #expect(mesh.diagnostics.inputTriangleCount == 16)
+        #expect(mesh.diagnostics.degenerateTrianglesDropped == 4)
         #expect(mesh.triangles.count == 12)
         // Orphan vertices from dropped triangles must not survive (they would
         // inflate boundingBox, which downstream tolerances derive from).
-        #expect(diag.weldedVertexCount == 8)
+        #expect(mesh.diagnostics.weldedVertexCount == 8)
         #expect(mesh.positions.count == 8)
         #expect(mesh.boundingBox.max == SIMD3(1, 1, 1))
     }
 
     @Test func emptySoupYieldsEmptyMeshWithoutThrowing() {
-        var diag = MeshDiagnostics()
-        let mesh = Mesh(weldingSoup: [], tolerance: 1e-6, diagnostics: &diag)
+        let mesh = Mesh(weldingSoup: [], tolerance: 1e-6)
         #expect(mesh.positions.isEmpty)
         #expect(mesh.triangles.isEmpty)
         #expect(mesh.boundingBox.min == .zero)
         #expect(mesh.boundingDiagonal == 0)
-        #expect(diag == MeshDiagnostics())
+        #expect(mesh.diagnostics == MeshDiagnostics())
     }
 
     // MARK: Validating init
@@ -112,14 +105,12 @@ struct MeshTests {
     // MARK: Adjacency & normals
 
     @Test func singleTriangleHasThreeBoundaryEdges() {
-        var diag = MeshDiagnostics()
         let mesh = Mesh(
             weldingSoup: [(SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0))],
-            tolerance: 1e-6,
-            diagnostics: &diag
+            tolerance: 1e-6
         )
-        #expect(diag.boundaryEdgeCount == 3)
-        #expect(diag.nonManifoldEdgeCount == 0)
+        #expect(mesh.diagnostics.boundaryEdgeCount == 3)
+        #expect(mesh.diagnostics.nonManifoldEdgeCount == 0)
         #expect(mesh.edges.count == 3)
         #expect(mesh.faceNormals == [SIMD3(0, 0, 1)])
     }
@@ -127,18 +118,16 @@ struct MeshTests {
     @Test func fanOfThreeTrianglesIsNonManifold() {
         let p0 = SIMD3<Double>(0, 0, 0)
         let p1 = SIMD3<Double>(0, 0, 1)
-        var diag = MeshDiagnostics()
         let mesh = Mesh(
             weldingSoup: [
                 (p0, p1, SIMD3(1, 0, 0)),
                 (p0, p1, SIMD3(0, 1, 0)),
                 (p0, p1, SIMD3(-1, 0, 0)),
             ],
-            tolerance: 1e-6,
-            diagnostics: &diag
+            tolerance: 1e-6
         )
-        #expect(diag.nonManifoldEdgeCount == 1)
-        #expect(diag.boundaryEdgeCount == 6)
+        #expect(mesh.diagnostics.nonManifoldEdgeCount == 1)
+        #expect(mesh.diagnostics.boundaryEdgeCount == 6)
         #expect(mesh.edges.count == 7)
         let shared = mesh.edges.first { $0.faces.count == 3 }
         #expect(shared?.faces == [0, 1, 2])

@@ -46,6 +46,24 @@ public struct OrthographicView: Sendable {
         SIMD3(dot(p, right), dot(p, trueUp), dot(p, forward))
     }
 
+    /// Viewer orbiting a Z-up model: `azimuthDegrees` rotates around +Z
+    /// (0° = viewer on the +X side, 90° = +Y side), `elevationDegrees` lifts
+    /// the viewer above the horizon (90° = straight down, matching `.top`).
+    /// `forward` points from the viewer into the scene; up is +Z, with the
+    /// standard graceful fallback at the poles.
+    ///
+    /// Computed with the library's deterministic trig, so saved view angles
+    /// reproduce bit-identically across platforms.
+    public init(azimuthDegrees: Double, elevationDegrees: Double) {
+        let cosElevation = cosDegrees(elevationDegrees)
+        let viewer = SIMD3(
+            cosElevation * cosDegrees(azimuthDegrees),
+            cosElevation * sinDegrees(azimuthDegrees),
+            sinDegrees(elevationDegrees)
+        )
+        self.init(forward: -viewer, up: SIMD3(0, 0, 1))
+    }
+
     // MARK: Named views (Z-up models, the 3D-printing / maker convention)
 
     /// Viewer at -Y looking +Y (screen x = world x, screen y = world z).

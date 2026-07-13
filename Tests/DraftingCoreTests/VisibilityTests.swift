@@ -16,8 +16,7 @@ struct VisibilityTests {
                 (SIMD3(0.25, 0, -1), SIMD3(0.6, 0, -1), SIMD3(0.6, 0, 1)),
                 (SIMD3(0.25, 0, -1), SIMD3(0.6, 0, 1), SIMD3(0.25, 0, 1)),
             ],
-            tolerance: 1e-9,
-            diagnostics: &diag
+            tolerance: 1e-9
         )
         let projected = projectPositions(mesh.positions, view: .front)
         let tolerances = Tolerances(options: .init(),

@@ -124,7 +124,7 @@ struct XRayPipelineTests {
 
     @Test func emptyMeshYieldsEmptyDrawing() {
         var diag = MeshDiagnostics()
-        let empty = Mesh(weldingSoup: [], tolerance: 1e-6, diagnostics: &diag)
+        let empty = Mesh(weldingSoup: [], tolerance: 1e-6)
         let drawing = makeLineDrawing(mesh: empty, view: .front)
         #expect(drawing.paths.isEmpty)
         #expect(drawing.bounds == .zero)
@@ -137,8 +137,7 @@ struct XRayPipelineTests {
         var diag = MeshDiagnostics()
         let flat = Mesh(
             weldingSoup: [(SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0.5, 5, 0))],
-            tolerance: 1e-6,
-            diagnostics: &diag
+            tolerance: 1e-6
         )
         let drawing = makeLineDrawing(mesh: flat, view: .front)
         // The 3 boundary edges all project onto y = 0; the two apex edges
@@ -155,8 +154,7 @@ struct XRayPipelineTests {
         var diag = MeshDiagnostics()
         let sliver = Mesh(
             weldingSoup: [(SIMD3(0, 0, 0), SIMD3(0, 2, 0), SIMD3(0, 1, 0.001))],
-            tolerance: 1e-9,
-            diagnostics: &diag
+            tolerance: 1e-9
         )
         let front = makeLineDrawing(mesh: sliver, view: .front)
         #expect(front.paths.count == 2)
@@ -170,7 +168,7 @@ struct SVGTests {
 
     @Test func svgStructureAndViewBox() {
         let drawing = makeLineDrawing(mesh: Fixtures.cube(), view: .front)
-        let svg = drawing.svg(margin: 2)
+        let svg = drawing.svg(style: SVGStyle(margin: 2))
         #expect(svg.hasPrefix("<svg xmlns=\"http://www.w3.org/2000/svg\""))
         #expect(svg.hasSuffix("</svg>\n"))
         // Bounds 1×1 + margins → viewBox 0 0 5 5.
@@ -184,7 +182,7 @@ struct SVGTests {
         let drawing = LineDrawing(canonicalizing: [
             LineDrawing.Path(points: [SIMD2(0, 0), SIMD2(0, 10)], kind: .visible)
         ])
-        let svg = drawing.svg(margin: 0)
+        let svg = drawing.svg(style: SVGStyle(margin: 0))
         // Model-space top (y=10) must map to SVG top (y=0).
         #expect(svg.contains("points=\"0.0,10.0 0.0,0.0\""))
     }
@@ -194,7 +192,7 @@ struct SVGTests {
             LineDrawing.Path(points: [SIMD2(0, 0), SIMD2(1, 0)], kind: .visible),
             LineDrawing.Path(points: [SIMD2(0, 1), SIMD2(1, 1)], kind: .hidden),
         ])
-        let svg = drawing.svg(hiddenDashPattern: [5, 2.5])
+        let svg = drawing.svg(style: SVGStyle(hiddenDashPattern: [5, 2.5]))
         #expect(svg.contains("class=\"visible\""))
         #expect(svg.contains("class=\"hidden\""))
         #expect(svg.contains("stroke-dasharray=\"5.0 2.5\""))
@@ -205,13 +203,15 @@ struct SVGTests {
             LineDrawing.Path(points: [SIMD2(0, 0), SIMD2(1, 0)], kind: .visible),
             LineDrawing.Path(points: [SIMD2(0, 1), SIMD2(1, 1)], kind: .hidden),
         ])
-        let svg = drawing.svg(strokeWidth: 2.0)
+        let svg = drawing.svg(style: SVGStyle(strokeWidth: 2.0))
         #expect(svg.contains("stroke=\"black\" stroke-width=\"2.0\""))
         #expect(svg.contains("stroke=\"#808080\" stroke-width=\"1.25\""),
                 "hidden defaults to 62.5% width, gray")
 
-        let custom = drawing.svg(strokeWidth: 2.0, hiddenStrokeWidth: 0.4,
-                                 visibleColor: "#000080", hiddenColor: "red")
+        let custom = drawing.svg(style: SVGStyle(strokeWidth: 2.0,
+                                                 hiddenStrokeWidth: 0.4,
+                                                 visibleColor: "#000080",
+                                                 hiddenColor: "red"))
         #expect(custom.contains("stroke=\"#000080\" stroke-width=\"2.0\""))
         #expect(custom.contains("stroke=\"red\" stroke-width=\"0.4\""))
     }

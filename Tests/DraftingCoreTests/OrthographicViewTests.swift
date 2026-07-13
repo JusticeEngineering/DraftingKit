@@ -77,6 +77,32 @@ struct OrthographicViewTests {
         #expect(abs(length(zeroUp.right) - 1) < 1e-15)
     }
 
+    @Test func orbitInitializerMatchesNamedViews() {
+        // The named-view angles under the orbit convention (azimuth from +X
+        // around +Z, elevation above the horizon). Degree-domain folds make
+        // these bases exactly equal, not just close.
+        let cases: [(OrthographicView, OrthographicView)] = [
+            (OrthographicView(azimuthDegrees: -90, elevationDegrees: 0), .front),
+            (OrthographicView(azimuthDegrees: 90, elevationDegrees: 0), .back),
+            (OrthographicView(azimuthDegrees: 0, elevationDegrees: 0), .right),
+            (OrthographicView(azimuthDegrees: 180, elevationDegrees: 0), .left),
+            (OrthographicView(azimuthDegrees: -90, elevationDegrees: 90), .top),
+            (OrthographicView(azimuthDegrees: -90, elevationDegrees: -90), .bottom),
+        ]
+        for (orbit, named) in cases {
+            #expect(length(orbit.forward - named.forward) < 1e-15)
+            #expect(length(orbit.right - named.right) < 1e-15)
+            #expect(length(orbit.trueUp - named.trueUp) < 1e-15)
+        }
+
+        // Arbitrary angles still produce an orthonormal basis.
+        let oblique = OrthographicView(azimuthDegrees: -55, elevationDegrees: 35)
+        #expect(abs(length(oblique.forward) - 1) < 1e-15)
+        #expect(abs(dot(oblique.right, oblique.forward)) < 1e-15)
+        #expect(abs(dot(oblique.trueUp, oblique.forward)) < 1e-15)
+        #expect(oblique.forward.z < 0, "positive elevation looks down")
+    }
+
     @Test func isometricSeesThreeCubeFaces() {
         // Sanity: the iso viewer is up-front-right, so the cube corner
         // (1, 0, 1) must be strictly closer than the opposite corner (0, 1, 0).

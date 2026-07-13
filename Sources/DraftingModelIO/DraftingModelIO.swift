@@ -19,15 +19,14 @@ public enum MeshImportError: Error, Sendable, Equatable {
 
 public enum MeshImport {
     /// Loads a mesh file, flattens all submeshes to triangles, welds, and
-    /// returns the mesh plus diagnostics.
+    /// returns the mesh (weld results on its `diagnostics`).
     ///
     /// Positions are converted to Double via ModelIO's float3 conversion;
     /// 8/16/32-bit indices, triangles, triangle strips and quads are all
     /// accepted. Everything is flattened to a triangle soup and welded, so
     /// coincident vertices merge exactly as they do for STL input.
     public static func mesh(contentsOf url: URL,
-                            weldToleranceFraction: Double = 1e-6,
-                            diagnostics: inout MeshDiagnostics) throws -> Mesh {
+                            weldToleranceFraction: Double = 1e-6) throws -> Mesh {
         if url.pathExtension.lowercased() == "stl" {
             let data: Data
             do {
@@ -36,8 +35,7 @@ public enum MeshImport {
                 throw MeshImportError.unreadableFile
             }
             return try STL.parse([UInt8](data),
-                                 weldToleranceFraction: weldToleranceFraction,
-                                 diagnostics: &diagnostics)
+                                 weldToleranceFraction: weldToleranceFraction)
         }
 
         guard FileManager.default.fileExists(atPath: url.path) else {
@@ -64,7 +62,7 @@ public enum MeshImport {
         let tolerance = diagonal > 0 && diagonal.isFinite
             ? weldToleranceFraction * diagonal
             : weldToleranceFraction
-        return Mesh(weldingSoup: soup, tolerance: tolerance, diagnostics: &diagnostics)
+        return Mesh(weldingSoup: soup, tolerance: tolerance)
     }
 
     // MARK: MDLMesh extraction

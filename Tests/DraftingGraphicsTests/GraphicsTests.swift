@@ -87,8 +87,7 @@ struct GraphicsTests {
                 (SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(1, 1, 0)),
                 (SIMD3(0, 0, 0), SIMD3(1, 1, 0), SIMD3(0, 1, 0)),
             ],
-            tolerance: 1e-9,
-            diagnostics: &diag
+            tolerance: 1e-9
         )
         let drawing = makeLineDrawing(mesh: mesh, view: .top)
         let data = drawing.pdfData(style: PDFStyle(pointsPerModelUnit: 72))

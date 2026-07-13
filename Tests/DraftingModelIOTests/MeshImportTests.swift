@@ -15,16 +15,14 @@ struct MeshImportTests {
     }
 
     @Test func importsOBJCube() throws {
-        var diag = MeshDiagnostics()
-        let mesh = try MeshImport.mesh(contentsOf: fixtureURL("cube", "obj"),
-                                       diagnostics: &diag)
+        let mesh = try MeshImport.mesh(contentsOf: fixtureURL("cube", "obj"))
         // 6 quad faces → 12 triangles → welds back to the unit cube.
         #expect(mesh.positions.count == 8)
         #expect(mesh.triangles.count == 12)
-        #expect(diag.weldedVertexCount == 8)
-        #expect(diag.boundaryEdgeCount == 0)
-        #expect(diag.nonManifoldEdgeCount == 0)
-        #expect(diag.degenerateTrianglesDropped == 0)
+        #expect(mesh.diagnostics.weldedVertexCount == 8)
+        #expect(mesh.diagnostics.boundaryEdgeCount == 0)
+        #expect(mesh.diagnostics.nonManifoldEdgeCount == 0)
+        #expect(mesh.diagnostics.degenerateTrianglesDropped == 0)
 
         let box = mesh.boundingBox
         #expect(box.min == SIMD3(0, 0, 0))
@@ -42,9 +40,7 @@ struct MeshImportTests {
     }
 
     @Test func importedOBJDrawsLikeTheProceduralCube() throws {
-        var diag = MeshDiagnostics()
-        let mesh = try MeshImport.mesh(contentsOf: fixtureURL("cube", "obj"),
-                                       diagnostics: &diag)
+        let mesh = try MeshImport.mesh(contentsOf: fixtureURL("cube", "obj"))
         let drawing = makeLineDrawing(mesh: mesh, view: .front)
         #expect(drawing.paths.count == 4)
         #expect(drawing.paths.allSatisfy { $0.kind == .visible })
@@ -52,15 +48,13 @@ struct MeshImportTests {
     }
 
     @Test func stlRoutesThroughCoreParser() throws {
-        var diag = MeshDiagnostics()
-        let mesh = try MeshImport.mesh(contentsOf: fixtureURL("cube-binary", "stl"),
-                                       diagnostics: &diag)
+        let mesh = try MeshImport.mesh(contentsOf: fixtureURL("cube-binary", "stl"))
         #expect(mesh.positions.count == 8)
         #expect(mesh.triangles.count == 12)
-        #expect(diag.inputTriangleCount == 12)
-        #expect(diag.weldedVertexCount == 8)
-        #expect(diag.boundaryEdgeCount == 0)
-        #expect(diag.nonManifoldEdgeCount == 0)
+        #expect(mesh.diagnostics.inputTriangleCount == 12)
+        #expect(mesh.diagnostics.weldedVertexCount == 8)
+        #expect(mesh.diagnostics.boundaryEdgeCount == 0)
+        #expect(mesh.diagnostics.nonManifoldEdgeCount == 0)
     }
 
     @Test func stlErrorsSurfaceAsSTLErrors() throws {
@@ -70,17 +64,15 @@ struct MeshImportTests {
             .appendingPathComponent("draftingkit-truncated-\(UUID().uuidString).stl")
         try Data([0x00, 0x01, 0x02]).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
-        var diag = MeshDiagnostics()
         #expect(throws: STLError.truncated) {
-            _ = try MeshImport.mesh(contentsOf: url, diagnostics: &diag)
+            _ = try MeshImport.mesh(contentsOf: url)
         }
     }
 
     @Test func missingFileThrowsUnreadable() {
-        var diag = MeshDiagnostics()
         let missing = URL(fileURLWithPath: "/nonexistent/draftingkit-\(UUID().uuidString).obj")
         #expect(throws: MeshImportError.unreadableFile) {
-            _ = try MeshImport.mesh(contentsOf: missing, diagnostics: &diag)
+            _ = try MeshImport.mesh(contentsOf: missing)
         }
     }
 
@@ -90,9 +82,8 @@ struct MeshImportTests {
             .appendingPathComponent("draftingkit-empty-\(UUID().uuidString).obj")
         try Data("# just a comment\n".utf8).write(to: url)
         defer { try? FileManager.default.removeItem(at: url) }
-        var diag = MeshDiagnostics()
         #expect(throws: MeshImportError.noGeometry) {
-            _ = try MeshImport.mesh(contentsOf: url, diagnostics: &diag)
+            _ = try MeshImport.mesh(contentsOf: url)
         }
     }
 }

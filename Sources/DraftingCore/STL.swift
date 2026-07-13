@@ -15,9 +15,9 @@ public enum STLError: Error, Sendable, Equatable {
 public enum STL {
     /// Parses binary or ASCII STL (autodetected) and welds it.
     /// `weldToleranceFraction` is relative to the soup's bounding diagonal.
+    /// Weld results and degradation counters are on the mesh's `diagnostics`.
     public static func parse(_ bytes: [UInt8],
-                             weldToleranceFraction: Double = 1e-6,
-                             diagnostics: inout MeshDiagnostics) throws -> Mesh {
+                             weldToleranceFraction: Double = 1e-6) throws -> Mesh {
         guard !bytes.isEmpty else { throw STLError.empty }
 
         let soup: [(SIMD3<Double>, SIMD3<Double>, SIMD3<Double>)]
@@ -57,7 +57,7 @@ public enum STL {
         // Degenerate extent (single point / all non-finite): fall back to the
         // fraction itself so welding still merges exact duplicates.
         let tolerance = diagonal > 0 ? weldToleranceFraction * diagonal : weldToleranceFraction
-        return Mesh(weldingSoup: soup, tolerance: tolerance, diagnostics: &diagnostics)
+        return Mesh(weldingSoup: soup, tolerance: tolerance)
     }
 
     // MARK: Binary

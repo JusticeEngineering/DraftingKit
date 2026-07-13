@@ -41,8 +41,7 @@ struct OcclusionTests {
         var diag = MeshDiagnostics()
         let single = Mesh(
             weldingSoup: [(SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 0, 1))],
-            tolerance: 1e-6,
-            diagnostics: &diag
+            tolerance: 1e-6
         )
         let (tester, _, _) = makeTester(single, .front)
         let sample = SIMD3(0.25, 0.25, 1.0)  // inside the projection, behind the face
@@ -66,8 +65,7 @@ struct OcclusionTests {
         // ~5e-13 — far below s². Must not occlude anything.
         let sliver = Mesh(
             weldingSoup: [(SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0.5, 1, 1e-12))],
-            tolerance: 1e-9,
-            diagnostics: &diag
+            tolerance: 1e-9
         )
         let (tester, _, _) = makeTester(sliver, .front)
         #expect(tester.occluderCount == 0)

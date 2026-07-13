@@ -39,8 +39,8 @@ Model: [NASA 3D Resources](https://github.com/nasa/NASA-3D-Resources)
 ```swift
 import DraftingCore
 
-var diagnostics = MeshDiagnostics()
-let mesh = try STL.parse(stlBytes, diagnostics: &diagnostics)
+let mesh = try STL.parse(stlBytes)
+mesh.diagnostics.boundaryEdgeCount   // weld results, degradation counters
 
 let drawing = try await makeLineDrawing(mesh: mesh, view: .isometric)
 

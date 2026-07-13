@@ -43,9 +43,7 @@ enum Entry {
 /// and writes hero.png (display bitmap) + hero.svg into the output directory.
 private func renderHero(path: String, outputDirectory: String,
                         azimuth: Double, elevation: Double, creaseAngle: Double) async {
-    var diagnostics = MeshDiagnostics()
-    guard let mesh = try? MeshImport.mesh(contentsOf: URL(fileURLWithPath: path),
-                                          diagnostics: &diagnostics) else {
+    guard let mesh = try? MeshImport.mesh(contentsOf: URL(fileURLWithPath: path)) else {
         print("import FAILED: \(path)")
         return
     }
@@ -80,9 +78,9 @@ private func renderHero(path: String, outputDirectory: String,
 
     let maxDimension = Swift.max(drawing.bounds.size.x, drawing.bounds.size.y)
     let unit = maxDimension > 0 ? maxDimension / 1000 : 1
-    let svg = drawing.svg(strokeWidth: 1.5 * unit,
-                          hiddenDashPattern: [6 * unit, 4 * unit],
-                          margin: 12 * unit)
+    let svg = drawing.svg(style: SVGStyle(strokeWidth: 1.5 * unit,
+                                          hiddenDashPattern: [6 * unit, 4 * unit],
+                                          margin: 12 * unit))
     try? Data(svg.utf8).write(to: directory.appendingPathComponent("hero.svg"))
     print("wrote \(directory.appendingPathComponent("hero.svg").path)")
 }
@@ -91,20 +89,18 @@ private func renderHero(path: String, outputDirectory: String,
 
 private func runBenchmark(path: String) async {
     let clock = ContinuousClock()
-    var diagnostics = MeshDiagnostics()
     print("importing \(path) …")
     var imported: Mesh?
     let importTime = clock.measure {
-        imported = try? MeshImport.mesh(contentsOf: URL(fileURLWithPath: path),
-                                        diagnostics: &diagnostics)
+        imported = try? MeshImport.mesh(contentsOf: URL(fileURLWithPath: path))
     }
     guard let mesh = imported else {
         print("import FAILED")
         return
     }
     print("import: \(importTime) — \(mesh.triangles.count) triangles, "
-        + "\(mesh.positions.count) vertices, \(diagnostics.boundaryEdgeCount) boundary edges, "
-        + "\(diagnostics.nonManifoldEdgeCount) non-manifold")
+        + "\(mesh.positions.count) vertices, \(mesh.diagnostics.boundaryEdgeCount) boundary edges, "
+        + "\(mesh.diagnostics.nonManifoldEdgeCount) non-manifold")
 
     for (name, view) in [("front", OrthographicView.front), ("isometric", .isometric)] {
         var drawing: LineDrawing?
@@ -304,17 +300,8 @@ struct DrawingParameters: Equatable {
     /// epsilonFraction = 10^epsilonExponent.
     var epsilonExponent: Double = -6
 
-    /// Viewer orbits a Z-up model: azimuth around Z (0° = +X side),
-    /// elevation up from the horizon. forward points INTO the scene.
     var view: OrthographicView {
-        let azimuth = azimuthDegrees * .pi / 180
-        let elevation = elevationDegrees * .pi / 180
-        let viewer = SIMD3(
-            cos(elevation) * cos(azimuth),
-            cos(elevation) * sin(azimuth),
-            sin(elevation)
-        )
-        return OrthographicView(forward: -viewer, up: SIMD3(0, 0, 1))
+        OrthographicView(azimuthDegrees: azimuthDegrees, elevationDegrees: elevationDegrees)
     }
 
     var options: DrawingOptions {
@@ -533,7 +520,7 @@ struct ContentView: View {
         errorMessage = ""
         defer { importing = false }
         do {
-            let (loaded, diagnostics, elapsed) = try await Self.importMesh(url)
+            let (loaded, elapsed) = try await Self.importMesh(url)
             mesh = loaded
             // Default the export scale to something printable: a 600mm model
             // at 72 pt/unit would be a ~43,000pt page — past the 14,400pt
@@ -546,9 +533,9 @@ struct ContentView: View {
             }
             meshInfo = "\(url.lastPathComponent) — \(loaded.triangles.count) triangles, "
                 + "\(loaded.positions.count) vertices (\(Self.seconds(elapsed)))"
-            diagnosticsInfo = "dropped \(diagnostics.degenerateTrianglesDropped) degenerate, "
-                + "\(diagnostics.boundaryEdgeCount) boundary edges, "
-                + "\(diagnostics.nonManifoldEdgeCount) non-manifold edges"
+            diagnosticsInfo = "dropped \(loaded.diagnostics.degenerateTrianglesDropped) degenerate, "
+                + "\(loaded.diagnostics.boundaryEdgeCount) boundary edges, "
+                + "\(loaded.diagnostics.nonManifoldEdgeCount) non-manifold edges"
             parameters.meshStamp += 1
         } catch {
             errorMessage = "Import failed: \(error)"
@@ -559,17 +546,16 @@ struct ContentView: View {
     /// unlike nonisolated async functions, which run on the CALLER's actor —
     /// on this toolchain that means the main thread.
     private nonisolated static func importMesh(_ url: URL) async throws
-        -> (Mesh, MeshDiagnostics, Duration)
+        -> (Mesh, Duration)
     {
-        try await withThrowingTaskGroup(of: (Mesh, MeshDiagnostics, Duration).self) { group in
+        try await withThrowingTaskGroup(of: (Mesh, Duration).self) { group in
             group.addTask {
                 let accessing = url.startAccessingSecurityScopedResource()
                 defer { if accessing { url.stopAccessingSecurityScopedResource() } }
-                var diagnostics = MeshDiagnostics()
                 let clock = ContinuousClock()
                 let start = clock.now
-                let mesh = try MeshImport.mesh(contentsOf: url, diagnostics: &diagnostics)
-                return (mesh, diagnostics, clock.now - start)
+                let mesh = try MeshImport.mesh(contentsOf: url)
+                return (mesh, clock.now - start)
             }
             return try await group.next()!
         }
@@ -676,9 +662,9 @@ struct ContentView: View {
         let dashes = [6 * unit, 4 * unit]
         let margin = 12 * unit
         save(type: .svg, name: "drawing.svg") {
-            Data(drawing.svg(strokeWidth: strokeWidth,
-                             hiddenDashPattern: dashes,
-                             margin: margin).utf8)
+            Data(drawing.svg(style: SVGStyle(strokeWidth: strokeWidth,
+                                             hiddenDashPattern: dashes,
+                                             margin: margin)).utf8)
         }
     }
 

@@ -1,24 +1,55 @@
 // SVG rendering — debug artifact, golden-file companion, and a free win for
 // OSS users. Not the production output path (that's DraftingGraphics' PDF).
 
+/// Styling for `LineDrawing.svg(style:)` — the SVG sibling of `PDFStyle`.
+///
+/// All lengths (stroke widths, dashes, margin) are in MODEL units, like the
+/// SVG's viewBox — scale them with the drawing's size for a consistent
+/// on-screen weight (e.g. `strokeWidth = maxDimension / 1000`).
+public struct SVGStyle: Sendable {
+    /// Visible stroke width, in model units.
+    public var strokeWidth: Double
+    /// Hidden stroke width; nil means 62.5% of `strokeWidth`.
+    public var hiddenStrokeWidth: Double?
+    /// Dash pattern for hidden lines, in model units.
+    public var hiddenDashPattern: [Double]
+    /// Margin added on all sides of the viewBox, in model units.
+    public var margin: Double
+    /// CSS color of visible strokes.
+    public var visibleColor: String
+    /// CSS color of hidden strokes.
+    public var hiddenColor: String
+
+    /// Creates a style; defaults give solid black visible lines and thinner
+    /// dashed gray hidden lines — the usual drafting look.
+    public init(strokeWidth: Double = 1.0,
+                hiddenStrokeWidth: Double? = nil,
+                hiddenDashPattern: [Double] = [4, 3],
+                margin: Double = 2.0,
+                visibleColor: String = "black",
+                hiddenColor: String = "#808080") {
+        self.strokeWidth = strokeWidth
+        self.hiddenStrokeWidth = hiddenStrokeWidth
+        self.hiddenDashPattern = hiddenDashPattern
+        self.margin = margin
+        self.visibleColor = visibleColor
+        self.hiddenColor = hiddenColor
+    }
+}
+
 public extension LineDrawing {
     /// Renders the drawing as a standalone SVG string.
     ///
     /// Coordinates are y-flipped for SVG's y-down space; the viewBox is the
-    /// drawing bounds plus `margin` on all sides, in model units. Visible
-    /// paths are solid strokes; hidden paths are dashed, thinner (62.5% of
-    /// `strokeWidth` unless overridden) and gray — the usual drafting look.
+    /// drawing bounds plus the style's margin on all sides, in model units.
     /// Transparent background.
-    ///
-    /// All lengths (stroke widths, dashes, margin) are in MODEL units, like
-    /// the viewBox — scale them with the drawing's size for a consistent
-    /// on-screen weight (e.g. `strokeWidth = maxDimension / 1000`).
-    func svg(strokeWidth: Double = 1.0,
-             hiddenDashPattern: [Double] = [4, 3],
-             margin: Double = 2.0,
-             hiddenStrokeWidth: Double? = nil,
-             visibleColor: String = "black",
-             hiddenColor: String = "#808080") -> String {
+    func svg(style: SVGStyle = SVGStyle()) -> String {
+        let strokeWidth = style.strokeWidth
+        let hiddenDashPattern = style.hiddenDashPattern
+        let margin = style.margin
+        let hiddenStrokeWidth = style.hiddenStrokeWidth
+        let visibleColor = style.visibleColor
+        let hiddenColor = style.hiddenColor
         let width = bounds.size.x + 2 * margin
         let height = bounds.size.y + 2 * margin
 

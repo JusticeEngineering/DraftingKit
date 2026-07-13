@@ -66,8 +66,7 @@ struct ClassificationTests {
         var diag = MeshDiagnostics()
         let single = Mesh(
             weldingSoup: [(SIMD3(0, 0, 0), SIMD3(1, 0, 0), SIMD3(0, 1, 0))],
-            tolerance: 1e-6,
-            diagnostics: &diag
+            tolerance: 1e-6
         )
         let singleCandidates = classify(single, view: .top)
         #expect(singleCandidates.count == 3)
@@ -79,8 +78,7 @@ struct ClassificationTests {
                 (SIMD3(0, 0, 0), SIMD3(0, 0, 1), SIMD3(0, 1, 0)),
                 (SIMD3(0, 0, 0), SIMD3(0, 0, 1), SIMD3(-1, 0, 0)),
             ],
-            tolerance: 1e-6,
-            diagnostics: &diag
+            tolerance: 1e-6
         )
         let fanCandidates = classify(fan, view: .front)
         // 6 boundary rim edges + the shared non-manifold edge: all drawn.
@@ -126,8 +124,7 @@ struct ClassificationTests {
                 (SIMD3(0, 0, 20), SIMD3(0.01, 0, 20), SIMD3(0, 0, 20.01)),
                 (SIMD3(5, 0, 5), SIMD3(5, 3, 5), SIMD3(5.0001, 1.5, 5)),
             ],
-            tolerance: 1e-9,
-            diagnostics: &diag
+            tolerance: 1e-9
         )
         let options = DrawingOptions()
         let projected = projectPositions(mesh.positions, view: .front)

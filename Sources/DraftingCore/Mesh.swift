@@ -46,6 +46,27 @@ struct MeshEdge: Sendable, Equatable {
     var faces: [Int]
 }
 
+/// Axis-aligned 3D box (the 3D sibling of `Rect2D` — a nominal type so it
+/// can be extended and conform, unlike a tuple).
+public struct Box3D: Sendable, Codable, Equatable {
+    /// Minimum corner.
+    public var min: SIMD3<Double>
+    /// Maximum corner.
+    public var max: SIMD3<Double>
+
+    /// Creates a box from its corners (not validated).
+    public init(min: SIMD3<Double>, max: SIMD3<Double>) {
+        self.min = min
+        self.max = max
+    }
+
+    /// Extent per axis (`max - min`).
+    public var size: SIMD3<Double> { max - min }
+
+    /// Corner-to-corner length — the usual "model size" scalar.
+    public var diagonal: Double { length(size) }
+}
+
 /// An indexed triangle mesh with precomputed edge adjacency and face
 /// normals. Construct once per model (welding dominates import cost) and
 /// reuse across views.
@@ -54,6 +75,9 @@ public struct Mesh: Sendable {
     public let positions: [SIMD3<Double>]
     /// Vertex indices into `positions`, three per triangle.
     public let triangles: [SIMD3<Int>]
+    /// What construction had to tolerate (weld results, degenerate drops,
+    /// boundary and non-manifold edge counts).
+    public let diagnostics: MeshDiagnostics
 
     /// Unit face normals, one per triangle (zero vector for a degenerate
     /// triangle that survived the validating init).
@@ -62,22 +86,19 @@ public struct Mesh: Sendable {
     let edges: [MeshEdge]
 
     /// Axis-aligned bounds over `positions` (zero for an empty mesh).
-    public var boundingBox: (min: SIMD3<Double>, max: SIMD3<Double>) {
-        guard var mn = positions.first else { return (.zero, .zero) }
+    public var boundingBox: Box3D {
+        guard var mn = positions.first else { return Box3D(min: .zero, max: .zero) }
         var mx = mn
         for p in positions {
             mn = pointwiseMin(mn, p)
             mx = pointwiseMax(mx, p)
         }
-        return (mn, mx)
+        return Box3D(min: mn, max: mx)
     }
 
     /// Length of the bounding box diagonal — the model's size scale,
     /// which tolerance defaults derive from.
-    public var boundingDiagonal: Double {
-        let box = boundingBox
-        return length(box.max - box.min)
-    }
+    public var boundingDiagonal: Double { boundingBox.diagonal }
 
     /// Validating init. Throws `MeshError.invalidIndex` if any index is out of
     /// range, `MeshError.emptyMesh` if there are no triangles.
@@ -91,6 +112,13 @@ public struct Mesh: Sendable {
         self.positions = positions
         self.triangles = triangles
         (self.faceNormals, self.edges) = Mesh.buildTopology(positions: positions, triangles: triangles)
+        self.diagnostics = MeshDiagnostics(
+            inputTriangleCount: triangles.count,
+            weldedVertexCount: positions.count,
+            degenerateTrianglesDropped: 0,
+            nonManifoldEdgeCount: edges.count { $0.faces.count >= 3 },
+            boundaryEdgeCount: edges.count { $0.faces.count == 1 }
+        )
     }
 
     /// Weld raw triangle soup (e.g. from STL) into an indexed mesh.
@@ -100,14 +128,11 @@ public struct Mesh: Sendable {
     ///   (1e-6 is a good default).
     ///
     /// Degenerate triangles (zero area after welding, or containing non-finite
-    /// coordinates) are dropped and counted in `diagnostics`. Never throws:
-    /// an empty or fully-degenerate soup yields an empty mesh, visible in
-    /// the diagnostics.
+    /// coordinates) are dropped and counted in the mesh's `diagnostics`.
+    /// Never throws: an empty or fully-degenerate soup yields an empty mesh,
+    /// visible in the diagnostics.
     public init(weldingSoup soup: [(SIMD3<Double>, SIMD3<Double>, SIMD3<Double>)],
-                tolerance: Double,
-                diagnostics: inout MeshDiagnostics) {
-        diagnostics.inputTriangleCount = soup.count
-
+                tolerance: Double) {
         var welder = VertexWelder(tolerance: tolerance)
         var positions: [SIMD3<Double>] = []
         var triangles: [SIMD3<Int>] = []
@@ -158,10 +183,13 @@ public struct Mesh: Sendable {
         self.triangles = triangles
         (self.faceNormals, self.edges) = Mesh.buildTopology(positions: compacted, triangles: triangles)
 
-        diagnostics.weldedVertexCount = compacted.count
-        diagnostics.degenerateTrianglesDropped = dropped
-        diagnostics.boundaryEdgeCount = edges.count { $0.faces.count == 1 }
-        diagnostics.nonManifoldEdgeCount = edges.count { $0.faces.count >= 3 }
+        self.diagnostics = MeshDiagnostics(
+            inputTriangleCount: soup.count,
+            weldedVertexCount: compacted.count,
+            degenerateTrianglesDropped: dropped,
+            nonManifoldEdgeCount: edges.count { $0.faces.count >= 3 },
+            boundaryEdgeCount: edges.count { $0.faces.count == 1 }
+        )
     }
 
     // MARK: Topology
