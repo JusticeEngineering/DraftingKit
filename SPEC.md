@@ -1,5 +1,13 @@
 # DraftingKit — Build Specification
 
+> **Historical design document.** This is the spec the library was built
+> from, milestone by milestone, preserved as-is. The SHIPPED public API has
+> since evolved deliberately (diagnostics live on `Mesh` rather than inout
+> parameters, `svg(style:)` takes an `SVGStyle`, `boundingBox` returns
+> `Box3D`, and the async `makeLineDrawing` throws on cancellation).
+> **For current signatures, trust the doc comments and README — not §3
+> below.** Changes are catalogued in CHANGELOG.md.
+
 You are building **DraftingKit**, a Swift library that converts 3D triangle meshes (STL/OBJ/USDZ) into 2D hidden-line-removed vector line drawings. It will be consumed by the host macOS app (a plan-sheet / drawing document tool, Swift/SwiftUI + AppKit) which places the resulting drawing as a scale-accurate image element on a document sheet. The library may be open-sourced later, which drives several hard constraints below (purity, no external deps, clean-room implementation, MIT license from day one).
 
 Work **milestone by milestone** (§9). Each milestone ends with `swift test` green, a short summary of what was built, and any proposed deviations from this spec — propose deviations explicitly, never deviate silently. Stop after each milestone for review.

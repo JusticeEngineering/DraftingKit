@@ -66,8 +66,11 @@ the PDF page limit of 14,400 pt — choose `pointsPerModelUnit` accordingly.)
 
 `OrthographicView` takes any `forward`/`up` pair; named views cover the
 drafting standards for Z-up models: `.front`, `.back`, `.left`, `.right`,
-`.top`, `.bottom`, `.isometric`. The screen basis is documented and pinned by
-tests: `right = normalize(forward × up)`, `trueUp = right × forward`, depth
+`.top`, `.bottom`, `.isometric`. For orbit-style UIs there's
+`OrthographicView(azimuthDegrees:elevationDegrees:)` — computed with the
+library's deterministic trig, so saved view angles reproduce bit-identically
+across platforms. The screen basis is documented and pinned by tests:
+`right = normalize(forward × up)`, `trueUp = right × forward`, depth
 increases into the scene.
 
 ## Options
