@@ -24,8 +24,8 @@ struct DeterminismTests {
             // Explicit serial path (in an async context the async overload
             // would win overload resolution; this is what sync callers get).
             let serial = runPipeline(mesh: mesh, view: view, options: .init(), mode: .full)
-            let parallel1 = await makeLineDrawing(mesh: mesh, view: view)
-            let parallel2 = await makeLineDrawing(mesh: mesh, view: view)
+            let parallel1 = try await makeLineDrawing(mesh: mesh, view: view)
+            let parallel2 = try await makeLineDrawing(mesh: mesh, view: view)
             // Hoisted: older swift-testing (Linux CI) rejects throwing calls
             // inside #expect's autoclosure.
             let serialJSON = try json(serial)
@@ -37,7 +37,7 @@ struct DeterminismTests {
         }
     }
 
-    @Test func parallelChunkingCoversAllSegmentsExactly() async {
+    @Test func parallelChunkingCoversAllSegmentsExactly() async throws {
         // A mesh with enough candidate edges to span many chunks: the
         // parallel path must produce the same runs array as the serial one.
         let mesh = Fixtures.cylinder(radius: 1, height: 2, radialSegments: 96)
@@ -45,7 +45,7 @@ struct DeterminismTests {
         let tester = OcclusionTester(mesh: mesh, projected: scene.projected,
                                      tolerances: scene.tolerances)
         let serial = computeRunsSerial(scene: scene, tester: tester)
-        let parallel = await computeRunsParallel(scene: scene, tester: tester)
+        let parallel = try await computeRunsParallel(scene: scene, tester: tester)
         #expect(serial.count == parallel.count)
         #expect(serial == parallel)
     }
@@ -70,7 +70,7 @@ struct DeterminismTests {
         }
 
         let parallelStart = clock.now
-        let parallelDrawing = await makeLineDrawing(mesh: subject, view: .isometric)
+        let parallelDrawing = try await makeLineDrawing(mesh: subject, view: .isometric)
         let parallelTime = clock.now - parallelStart
 
         print("[perf] subdividedCube 99,372 triangles, isometric view")

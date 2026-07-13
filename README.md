@@ -42,7 +42,7 @@ import DraftingCore
 var diagnostics = MeshDiagnostics()
 let mesh = try STL.parse(stlBytes, diagnostics: &diagnostics)
 
-let drawing = await makeLineDrawing(mesh: mesh, view: .isometric)
+let drawing = try await makeLineDrawing(mesh: mesh, view: .isometric)
 
 let svg = drawing.svg()                     // styled SVG string
 ```
@@ -92,8 +92,12 @@ classifies ~530k paths in under 2 seconds (Apple Silicon, release build):
 Practical guidance:
 
 - Call the **async** `makeLineDrawing` overload — it fans the per-edge work
-  out over a task group and keeps every heavy phase off the calling actor.
-  The synchronous form is the serial reference; both produce identical bytes.
+  out over a task group, keeps every heavy phase off the calling actor, and
+  **honors cancellation**: cancelling the surrounding task (as SwiftUI's
+  `.task(id:)` does on every parameter change) makes it throw
+  `CancellationError` within milliseconds instead of computing a result
+  nobody wants. It never returns a partial drawing. The synchronous form is
+  the serial reference; both produce identical bytes.
 - Build the `Mesh` once per file (welding dominates import) and reuse it
   across views.
 - For display, rasterize large drawings asynchronously rather than handing a
@@ -129,9 +133,8 @@ cutting planes, arc/circle recovery on output polylines, Metal depth-buffer
 occlusion, STEP/B-rep input, mesh repair beyond welding, corner-joining path
 chaining, textures/materials, any UI beyond the demo.
 
-Planned next: cooperative cancellation for long runs, parallel welding,
-scan-tuned presets, section views, and arc fitting (the pipeline's stage
-boundaries were designed for these).
+Planned next: parallel welding, scan-tuned presets, section views, and arc
+fitting (the pipeline's stage boundaries were designed for these).
 
 ## Acknowledgments
 

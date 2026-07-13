@@ -25,21 +25,30 @@ public func makeLineDrawing(mesh: Mesh,
 /// Every stage — including the serial ones (projection, BVH build, chaining)
 /// — runs inside child tasks on the global executor, so calling this from
 /// the main actor never blocks UI no matter how heavy the mesh is.
+///
+/// **Cancellation is cooperative and honored**: if the surrounding task is
+/// cancelled, this throws `CancellationError` — promptly between pipeline
+/// phases and within milliseconds inside the sampling stage. It never
+/// returns a partial drawing: the result is either complete (byte-identical
+/// to the synchronous form) or an error.
 public func makeLineDrawing(mesh: Mesh,
                             view: OrthographicView,
-                            options: DrawingOptions = .init()) async -> LineDrawing {
-    await withTaskGroup(of: LineDrawing.self) { group in
+                            options: DrawingOptions = .init()) async throws -> LineDrawing {
+    try await withThrowingTaskGroup(of: LineDrawing.self) { group in
         group.addTask {
             guard let scene = prepareScene(mesh: mesh, view: view, options: options) else {
                 return LineDrawing(canonicalizing: [])
             }
+            try Task.checkCancellation()
             let tester = OcclusionTester(mesh: mesh, projected: scene.projected,
                                          tolerances: scene.tolerances)
-            let runs = await computeRunsParallel(scene: scene, tester: tester)
+            try Task.checkCancellation()
+            let runs = try await computeRunsParallel(scene: scene, tester: tester)
+            try Task.checkCancellation()
             return finishFullDrawing(runsPerSegment: runs, scene: scene)
         }
         // Exactly one child task.
-        return await group.next() ?? LineDrawing(canonicalizing: [])
+        return try await group.next() ?? LineDrawing(canonicalizing: [])
     }
 }
 
@@ -108,45 +117,50 @@ func prepareScene(mesh: Mesh,
 
 // MARK: Per-edge visibility (stages 4.4 + 4.5), serial and parallel
 
-private func computeRunsChunk(_ range: Range<Int>,
-                              scene: PreparedScene,
-                              tester: OcclusionTester) -> [[VisibilityRun]] {
-    var chunk: [[VisibilityRun]] = []
-    chunk.reserveCapacity(range.count)
-    for index in range {
-        let segment = scene.segments[index]
-        chunk.append(visibilityRuns(for: segment,
-                                    ownFaces: scene.mesh.edges[segment.edgeIndex].faces,
-                                    tester: tester,
-                                    tolerances: scene.tolerances))
-    }
-    return chunk
+@inline(__always)
+private func computeRuns(at index: Int,
+                         scene: PreparedScene,
+                         tester: OcclusionTester) -> [VisibilityRun] {
+    let segment = scene.segments[index]
+    return visibilityRuns(for: segment,
+                          ownFaces: scene.mesh.edges[segment.edgeIndex].faces,
+                          tester: tester,
+                          tolerances: scene.tolerances)
 }
 
 func computeRunsSerial(scene: PreparedScene, tester: OcclusionTester) -> [[VisibilityRun]] {
-    computeRunsChunk(scene.segments.indices, scene: scene, tester: tester)
+    scene.segments.indices.map { computeRuns(at: $0, scene: scene, tester: tester) }
 }
 
 /// TaskGroup over fixed edge-index chunks. Chunk results carry their offset
 /// and land in a preallocated index-addressed array, so completion order
 /// cannot influence output (constraint C3).
 func computeRunsParallel(scene: PreparedScene,
-                         tester: OcclusionTester) async -> [[VisibilityRun]] {
+                         tester: OcclusionTester) async throws -> [[VisibilityRun]] {
     let count = scene.segments.count
     guard count > 0 else { return [] }
     // Fixed fan-out; the cooperative pool schedules chunks onto cores.
     let chunkSize = Swift.max(1, (count + 63) / 64)
     var results = [[VisibilityRun]?](repeating: nil, count: count)
-    await withTaskGroup(of: (Int, [[VisibilityRun]]).self) { group in
+    try await withThrowingTaskGroup(of: (Int, [[VisibilityRun]]).self) { group in
         var start = 0
         while start < count {
             let range = start..<Swift.min(start + chunkSize, count)
             group.addTask {
-                (range.lowerBound, computeRunsChunk(range, scene: scene, tester: tester))
+                // Cooperative cancellation: cheap flag check every few
+                // hundred edges bounds abandon latency to milliseconds
+                // without measurable cost on the uncancelled path.
+                var chunk: [[VisibilityRun]] = []
+                chunk.reserveCapacity(range.count)
+                for (i, index) in range.enumerated() {
+                    if i % 256 == 0 { try Task.checkCancellation() }
+                    chunk.append(computeRuns(at: index, scene: scene, tester: tester))
+                }
+                return (range.lowerBound, chunk)
             }
             start = range.upperBound
         }
-        for await (offset, chunk) in group {
+        for try await (offset, chunk) in group {
             for (i, runs) in chunk.enumerated() {
                 results[offset + i] = runs
             }

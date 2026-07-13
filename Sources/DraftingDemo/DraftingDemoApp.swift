@@ -53,8 +53,11 @@ private func renderHero(path: String, outputDirectory: String,
     parameters.azimuthDegrees = azimuth
     parameters.elevationDegrees = elevation
     parameters.creaseAngleDegrees = creaseAngle
-    let drawing = await makeLineDrawing(mesh: mesh, view: parameters.view,
-                                        options: parameters.options)
+    guard let drawing = try? await makeLineDrawing(mesh: mesh, view: parameters.view,
+                                                    options: parameters.options) else {
+        print("drawing FAILED")
+        return
+    }
     let visible = drawing.paths.count { $0.kind == .visible }
     print("\(mesh.triangles.count) triangles → \(visible) visible + "
         + "\(drawing.paths.count - visible) hidden paths")
@@ -584,8 +587,16 @@ struct ContentView: View {
 
         let clock = ContinuousClock()
         let start = clock.now
-        let result = await makeLineDrawing(mesh: mesh, view: parameters.view,
-                                           options: parameters.options)
+        let result: LineDrawing
+        do {
+            result = try await makeLineDrawing(mesh: mesh, view: parameters.view,
+                                               options: parameters.options)
+        } catch {
+            // Cancelled: .task(id:) superseded this run — the library now
+            // stops computing within milliseconds instead of running to
+            // completion and being discarded.
+            return
+        }
         let computeElapsed = clock.now - start
         // A newer compute superseded this one while it was in flight.
         guard generation == computeGeneration else { return }
